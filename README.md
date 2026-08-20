@@ -30,6 +30,9 @@ it rewrites that block in place. Your OpenRouter key stays in your browser; ther
   the original as it arrives, and **new CSS is injected live** so the page restyles before your eyes.
 - **See the real prompt** — the **Prompt tab** shows the exact system + user message being sent,
   with your own instruction highlighted where it's injected.
+- **Cost & tokens, tracked** — every result shows its cost and input/output tokens; a **Usage** tab
+  keeps the last 10, and a full **paginated usage log** records model · cost · tokens · date · site ·
+  mode (metadata only — never your prompt or the page).
 - **Three enforced contracts** — from "classes only" to "change anything", with real guardrails (below).
 - **Listeners survive** — in restructure mode, elements the AI keeps by `id` are grafted back as the
   *original live nodes*, so their event handlers come along for the ride.
@@ -86,8 +89,9 @@ background.js           service worker — settings, the streaming OpenRouter ca
 content/content.js      nested-outline highlight · side panel with HTML/CSS/JS/Prompt tabs ·
                         live diff · CSS harvest · the three mode-enforcing DOM appliers
 content/content.css     arms the crosshair + the apply flash; all UI lives in a Shadow DOM
-popup/                  Main (activate · mode · model) · Settings (BYOK key)
+popup/                  Main (activate · mode · model) · Usage (last 10 + total) · Settings (key)
 options/                full-page config; hosts the ai_model_selector modal
+usage/                  full paginated usage log (metadata only, no prompts/responses)
 vendor/                 juanpe500/ai_model_selector, vendored (MIT — MV3 CSP blocks CDN)
 icons/                  ✦ mark, generated
 ```

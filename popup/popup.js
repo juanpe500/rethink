@@ -72,7 +72,55 @@ document.querySelectorAll(".tab").forEach((tab) =>
 function switchTab(name) {
   document.querySelectorAll(".tab").forEach((t) => t.classList.toggle("on", t.dataset.tab === name));
   document.querySelectorAll(".panel").forEach((p) => p.classList.toggle("on", p.dataset.panel === name));
+  if (name === "usage") loadUsage();
 }
+
+// ── usage ────────────────────────────────────────────────────────────────────
+function fmtCost(c) {
+  if (typeof c !== "number") return "—";
+  if (c === 0) return "free";
+  return "$" + (c < 0.01 ? c.toFixed(6) : c.toFixed(4));
+}
+function shortModel(id) { return id ? (id.includes("/") ? id.split("/").pop() : id) : "—"; }
+function relTime(ts) {
+  const s = Math.max(0, (Date.now() - ts) / 1000);
+  if (s < 60) return "just now";
+  if (s < 3600) return Math.floor(s / 60) + "m ago";
+  if (s < 86400) return Math.floor(s / 3600) + "h ago";
+  return Math.floor(s / 86400) + "d ago";
+}
+async function loadUsage() {
+  const list = document.getElementById("useList");
+  const r = await chrome.runtime.sendMessage({ type: "GET_USAGE", payload: { offset: 0, limit: 10 } });
+  if (!r || !r.ok) { list.innerHTML = `<div class="empty">Couldn't load usage.</div>`; return; }
+  document.getElementById("useTotal").textContent = fmtCost(r.totalCost);
+  document.getElementById("useTok").textContent =
+    `${r.total} generation${r.total === 1 ? "" : "s"} · ${r.totalIn.toLocaleString()} in / ${r.totalOut.toLocaleString()} out`;
+  if (!r.entries.length) { list.innerHTML = `<div class="empty">No generations yet — rethink a block to start logging.</div>`; return; }
+  list.innerHTML = r.entries.map((e) => {
+    const free = e.cost === 0 || e.cost == null;
+    return `<div class="userow">
+      <span class="cost ${free ? "free" : ""}">${fmtCost(e.cost)}</span>
+      <span class="meta">
+        <span class="model">${escapeHtml(shortModel(e.model))}</span>
+        <span class="sub">${escapeHtml(e.host || "—")} · ${escapeHtml(e.mode || "—")} · ${(e.pin ?? "?")}→${(e.pout ?? "?")} tok</span>
+      </span>
+      <span class="when">${relTime(e.ts)}</span>
+    </div>`;
+  }).join("");
+}
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+}
+document.getElementById("openLogs").addEventListener("click", () => {
+  chrome.tabs.create({ url: chrome.runtime.getURL("usage/usage.html") });
+  window.close();
+});
+document.getElementById("clearUsage").addEventListener("click", async () => {
+  if (!confirm("Clear the entire usage log? This can't be undone.")) return;
+  await chrome.runtime.sendMessage({ type: "CLEAR_USAGE" });
+  loadUsage();
+});
 document.addEventListener("click", (e) => {
   const g = e.target.closest("[data-goto]");
   if (g) {

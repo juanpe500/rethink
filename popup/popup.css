@@ -84,3 +84,22 @@ input:focus, select:focus { border-color: var(--accent); }
 .saved { margin-top: 8px; color: #34d399; font-weight: 600; text-align: center; }
 .warn { margin-top: 14px; color: #fbbf24; font-size: 12px; }
 .warn a, .help a { color: var(--accent2); }
+
+/* usage tab */
+.usehead { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin-bottom: 12px; }
+.usetotals { display: flex; flex-direction: column; }
+.usetotal { font: 700 20px/1 ui-monospace, monospace; color: #34d399; }
+.usetotals small { color: var(--muted); font-size: 11px; margin-top: 3px; }
+.uselist { display: flex; flex-direction: column; gap: 1px; background: var(--line); border: 1px solid var(--line); border-radius: 9px; overflow: hidden; max-height: 260px; overflow-y: auto; }
+.uselist .empty { background: var(--panel); color: var(--muted); padding: 16px; text-align: center; font-size: 12px; }
+.userow { display: grid; grid-template-columns: auto 1fr auto; gap: 8px; align-items: baseline; background: var(--panel); padding: 8px 10px; }
+.userow .cost { font: 700 12px/1.3 ui-monospace, monospace; color: #a5b4fc; white-space: nowrap; }
+.userow .cost.free { color: var(--muted); }
+.userow .meta { min-width: 0; }
+.userow .model { font: 600 12px/1.3 ui-monospace, monospace; color: var(--text); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.userow .sub { color: var(--muted); font-size: 10.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.userow .when { color: var(--muted); font-size: 10.5px; white-space: nowrap; }
+.userow-foot { display: flex; align-items: flex-start; justify-content: space-between; gap: 10px; margin-top: 10px; }
+.userow-foot .help { margin: 0; }
+.linkbtn { border: 0; background: transparent; color: #f87171; cursor: pointer; font: 600 11px/1 inherit; padding: 2px; white-space: nowrap; }
+.linkbtn:hover { text-decoration: underline; }

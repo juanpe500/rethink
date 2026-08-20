@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="stylesheet" href="usage.css" />
+    <title>rethink · usage logs</title>
+  </head>
+  <body>
+    <main>
+      <header class="top">
+        <div>
+          <h1><span class="spark">✦</span> usage logs</h1>
+          <p class="sub">Every generation's cost &amp; tokens. Metadata only — your prompts and the pages are never stored.</p>
+        </div>
+        <button id="clear" class="ghost danger">Clear all</button>
+      </header>
+
+      <section class="cards">
+        <div class="card"><span class="k">Total spent</span><span id="sumCost" class="v cost">$0</span></div>
+        <div class="card"><span class="k">Generations</span><span id="sumN" class="v">0</span></div>
+        <div class="card"><span class="k">Input tokens</span><span id="sumIn" class="v">0</span></div>
+        <div class="card"><span class="k">Output tokens</span><span id="sumOut" class="v">0</span></div>
+      </section>
+
+      <div class="tablewrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Date</th><th>Website</th><th>Model</th><th>Mode</th>
+              <th class="num">Input</th><th class="num">Output</th><th class="num">Cost</th>
+            </tr>
+          </thead>
+          <tbody id="rows"></tbody>
+        </table>
+      </div>
+
+      <footer class="pager">
+        <button id="prev" class="ghost">← Prev</button>
+        <span id="pageInfo" class="pageinfo">—</span>
+        <button id="next" class="ghost">Next →</button>
+      </footer>
+    </main>
+    <script src="usage.js"></script>
+  </body>
+</html>

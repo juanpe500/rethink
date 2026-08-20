@@ -95,11 +95,47 @@ function chatBody(model, mode, payload, stream) {
     model,
     stream: !!stream,
     temperature: 0.7,
+    // Ask OpenRouter to include token counts + cost (works for stream & non-stream).
+    usage: { include: true },
     messages: [
       { role: "system", content: systemPrompt(mode) },
       { role: "user", content: userPrompt(payload) },
     ],
   });
+}
+
+// ── usage log (metadata only — never the prompt or the response) ─────────────
+const USAGE_KEY = "rethink_usage";
+const USAGE_CAP = 5000;
+
+async function recordUsage(usage, model, mode, sender) {
+  if (!usage) return null;
+  const url = sender?.tab?.url || sender?.url || "";
+  let host = "";
+  try { host = new URL(url).hostname; } catch (_) {}
+  const entry = {
+    ts: Date.now(),
+    host,
+    model: model || "",
+    mode: mode || "",
+    pin: usage.prompt_tokens ?? usage.input_tokens ?? null,
+    pout: usage.completion_tokens ?? usage.output_tokens ?? null,
+    cost: typeof usage.cost === "number" ? usage.cost : null,
+  };
+  const store = await chrome.storage.local.get({ [USAGE_KEY]: [] });
+  const arr = store[USAGE_KEY];
+  arr.unshift(entry); // newest first
+  if (arr.length > USAGE_CAP) arr.length = USAGE_CAP;
+  await chrome.storage.local.set({ [USAGE_KEY]: arr });
+  return entry;
+}
+
+async function getUsage(offset = 0, limit = 10) {
+  const { [USAGE_KEY]: arr = [] } = await chrome.storage.local.get({ [USAGE_KEY]: [] });
+  const totalCost = arr.reduce((s, e) => s + (e.cost || 0), 0);
+  const totalIn = arr.reduce((s, e) => s + (e.pin || 0), 0);
+  const totalOut = arr.reduce((s, e) => s + (e.pout || 0), 0);
+  return { ok: true, total: arr.length, totalCost, totalIn, totalOut, entries: arr.slice(offset, offset + limit) };
 }
 
 // Split the fenced reply into { html, css, js }. Tolerant of a still-open final
@@ -158,7 +194,7 @@ async function callOpenRouter({ prompt, html, css, mode }) {
   const content = data?.choices?.[0]?.message?.content || "";
   const parts = parseFences(content);
   if (!parts.html) return { ok: false, error: "Model returned no html block.", raw: content };
-  return { ok: true, ...parts, model };
+  return { ok: true, ...parts, model, usage: data.usage || null };
 }
 
 // Streaming path: fetch with stream:true, read the SSE body, and forward each
@@ -193,6 +229,7 @@ async function streamOpenRouter(payload, port) {
   const dec = new TextDecoder();
   let buf = "";
   let full = "";
+  let usage = null; // OpenRouter sends this in the final frame (usage.include)
   port.postMessage({ type: "start", model });
   try {
     while (true) {
@@ -209,6 +246,7 @@ async function streamOpenRouter(payload, port) {
         if (data === "[DONE]") continue;
         try {
           const j = JSON.parse(data);
+          if (j.usage) usage = j.usage;
           const delta = j.choices?.[0]?.delta?.content || "";
           if (delta) {
             full += delta;
@@ -223,7 +261,8 @@ async function streamOpenRouter(payload, port) {
     port.postMessage({ type: "error", error: `Stream interrupted: ${e.message}`, full });
     return;
   }
-  port.postMessage({ type: "done", full });
+  const entry = await recordUsage(usage, model, payload.mode, port.sender);
+  port.postMessage({ type: "done", full, usage, entry });
 }
 
 async function fetchModels() {
@@ -244,8 +283,20 @@ async function fetchModels() {
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
   (async () => {
     switch (msg?.type) {
-      case "OR_CHAT":
-        sendResponse(await callOpenRouter(msg.payload || {}));
+      case "OR_CHAT": {
+        const res = await callOpenRouter(msg.payload || {});
+        if (res.ok && res.usage) res.entry = await recordUsage(res.usage, res.model, msg.payload?.mode, _sender);
+        sendResponse(res);
+        break;
+      }
+      case "GET_USAGE": {
+        const { offset = 0, limit = 10 } = msg.payload || {};
+        sendResponse(await getUsage(offset, limit));
+        break;
+      }
+      case "CLEAR_USAGE":
+        await chrome.storage.local.set({ [USAGE_KEY]: [] });
+        sendResponse({ ok: true });
         break;
       case "OR_MODELS":
         sendResponse(await fetchModels());

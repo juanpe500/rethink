@@ -35,6 +35,7 @@
     cssEl: null, // live-injected <style> for streamed CSS
     port: null,
     raw: "",
+    usage: null,
     sections: { html: "", css: "", js: "" },
     activeTab: "html",
     diffScheduled: false,
@@ -133,6 +134,7 @@
     .pfoot button.warn { border-color: #b45309; color: #fbbf24; }
     .pfoot .msg { color: #fca5a5; font: 12px ui-sans-serif, system-ui, sans-serif; flex: 1; }
     .pfoot .ok { color: #34d399; font-weight: 600; }
+    .pfoot .use { font: 11px ui-monospace, "Cascadia Code", monospace; color: #a5b4fc; background: #20203a; border: 1px solid #33334d; border-radius: 6px; padding: 3px 7px; white-space: nowrap; }
   `;
 
   // ── highlight drawing ──────────────────────────────────────────────────────
@@ -391,6 +393,7 @@
     state.htmlApplied = false;
     state.htmlUndo = null;
     state.lastAppliedCss = "";
+    state.usage = null;
     const run = panel.querySelector(".prun");
     if (run) run.disabled = true;
     setFoot("");
@@ -414,6 +417,7 @@
         scheduleRender(false);
       } else if (m.type === "done") {
         state.raw = m.full || state.raw;
+        state.usage = m.usage || null;
         renderStream(true);
         finishRun();
         try { port.disconnect(); } catch (_) {}
@@ -503,7 +507,9 @@
 
     const jsBtn = state.sections.js && state.mode === "freedom"
       ? `<button class="warn" data-act="runjs" title="runs the suggested JS in the page, once">⚠ run JS once</button>` : "";
+    const usg = usageLabel(state.usage);
     setFoot(`<span class="ok">✓ applied</span>
+      ${usg ? `<span class="use">${usg}</span>` : ""}
       <button data-act="again">again</button>
       <button data-act="undo">undo</button>
       ${jsBtn}
@@ -793,6 +799,24 @@
 
   function escapeHtml(s) {
     return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  }
+
+  function fmtNum(n) {
+    return n == null ? "?" : Number(n).toLocaleString("en-US");
+  }
+  function fmtCost(c) {
+    if (typeof c !== "number") return "";
+    if (c === 0) return "free";
+    return "$" + (c < 0.01 ? c.toFixed(6) : c.toFixed(4));
+  }
+  // "$0.0012 · 1,234 in · 567 out" — from an OpenRouter usage object
+  function usageLabel(u) {
+    if (!u) return "";
+    const cost = fmtCost(typeof u.cost === "number" ? u.cost : undefined);
+    const pin = u.prompt_tokens ?? u.input_tokens;
+    const pout = u.completion_tokens ?? u.output_tokens;
+    const toks = pin != null || pout != null ? `${fmtNum(pin)} in · ${fmtNum(pout)} out` : "";
+    return [cost, toks].filter(Boolean).join(" · ");
   }
 
   // ── messaging from popup ───────────────────────────────────────────────────

@@ -11,6 +11,7 @@
       <div class="brand"><span class="spark">✦</span> rethink</div>
       <nav class="tabs">
         <button class="tab on" data-tab="main">Main</button>
+        <button class="tab" data-tab="usage">Usage</button>
         <button class="tab" data-tab="settings">Settings</button>
       </nav>
     </header>
@@ -52,6 +53,22 @@
 
       <div id="warnKey" class="warn" hidden>
         No API key yet — add one in <a href="#" data-goto="settings">Settings</a>.
+      </div>
+    </section>
+
+    <!-- USAGE -->
+    <section class="panel" data-panel="usage">
+      <div class="usehead">
+        <div class="usetotals">
+          <span id="useTotal" class="usetotal">$0</span>
+          <small id="useTok">— generations</small>
+        </div>
+        <button id="openLogs" class="ghost">Full logs →</button>
+      </div>
+      <div id="useList" class="uselist"></div>
+      <div class="userow-foot">
+        <span class="help">Last 10 generations. Model, cost, tokens, date, site &amp; mode are stored — never your prompt or the page.</span>
+        <button id="clearUsage" class="linkbtn">Clear log</button>
       </div>
     </section>
 
