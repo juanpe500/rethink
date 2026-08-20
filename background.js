@@ -91,7 +91,7 @@ function reqHeaders(key) {
 }
 
 function chatBody(model, mode, payload, stream) {
-  return JSON.stringify({
+  const body = {
     model,
     stream: !!stream,
     temperature: 0.7,
@@ -101,7 +101,11 @@ function chatBody(model, mode, payload, stream) {
       { role: "system", content: systemPrompt(mode) },
       { role: "user", content: userPrompt(payload) },
     ],
-  });
+  };
+  if (payload && Number.isFinite(payload.maxTokens) && payload.maxTokens > 0) {
+    body.max_tokens = Math.round(payload.maxTokens);
+  }
+  return JSON.stringify(body);
 }
 
 // ── usage log (metadata only — never the prompt or the response) ─────────────

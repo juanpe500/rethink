@@ -36,6 +36,8 @@
     port: null,
     raw: "",
     usage: null,
+    inputTokens: 0, // ~tokens of the html+css being sent
+    maxTokens: 1024, // output cap chosen on the slider
     panelMoved: false, // user dragged the panel → stop auto-repositioning
     dragging: null,
     sections: { html: "", css: "", js: "" },
@@ -101,6 +103,9 @@
     .phead .model { margin-left: auto; font: 11px ui-monospace, monospace; color: #8888a6; max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
     .phead .x { border: 0; background: transparent; color: #8888a6; cursor: pointer; font-size: 15px; padding: 0 2px; }
     .phead .x:hover { color: #fff; }
+    .phead .parent { border: 1px solid #33334d; background: #23233a; color: #c9c9db; cursor: pointer; font: 600 11px ui-sans-serif, system-ui, sans-serif; border-radius: 6px; padding: 3px 8px; }
+    .phead .parent:hover:not(:disabled) { border-color: #6366f1; color: #fff; }
+    .phead .parent:disabled { opacity: .4; cursor: default; }
 
     .pprompt { padding: 10px 11px; border-bottom: 1px solid #2a2a44; }
     .pinput { width: 100%; resize: none; overflow: hidden; background: #10101e; color: #f4f4f8; border: 1px solid #33334d; border-radius: 8px; padding: 8px 9px; font: inherit; line-height: 1.4; min-height: 20px; max-height: 30vh; outline: none; }
@@ -111,6 +116,17 @@
     .pmodes button.on { background: #6366f1; border-color: #6366f1; color: #fff; }
     .prun { border: 0; background: #6366f1; color: #fff; border-radius: 7px; padding: 6px 13px; font: 600 12px ui-sans-serif, system-ui, sans-serif; cursor: pointer; }
     .prun:disabled { opacity: .55; cursor: default; }
+    .pmax { margin-top: 11px; }
+    .pmaxhead { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 5px; }
+    .pmaxhead .lab { font-size: 11.5px; font-weight: 600; color: #c9c9db; }
+    .pmaxhead .val { font: 600 11.5px ui-monospace, monospace; color: #a5b4fc; }
+    .pmaxhead .val b { color: #fff; }
+    .pmaxslider { -webkit-appearance: none; appearance: none; width: 100%; height: 4px; border-radius: 3px; background: #33334d; outline: none; margin: 3px 0; cursor: pointer; }
+    .pmaxslider::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; width: 15px; height: 15px; border-radius: 50%; background: #6366f1; border: 2px solid #cdd0ff; cursor: pointer; }
+    .pmaxslider::-moz-range-thumb { width: 15px; height: 15px; border-radius: 50%; background: #6366f1; border: 2px solid #cdd0ff; cursor: pointer; }
+    .pmaxinfo { font: 11px ui-monospace, "Cascadia Code", monospace; color: #8888a6; margin-top: 5px; display: flex; justify-content: space-between; gap: 8px; }
+    .pmaxinfo b { color: #c9c9db; }
+    .pmaxinfo .cmp { color: #a5b4fc; }
 
     .ptabs { display: flex; align-items: center; gap: 2px; padding: 6px 8px 0; border-bottom: 1px solid #2a2a44; }
     .ptab { position: relative; border: 0; background: transparent; color: #9a9ab0; cursor: pointer; padding: 6px 11px; font: 600 12px ui-sans-serif, system-ui, sans-serif; border-radius: 7px 7px 0 0; }
@@ -245,6 +261,7 @@
     panel.innerHTML = `
       <div class="phead">
         <span class="ttl"><span class="spk">✦</span> rethink</span>
+        <button class="parent" title="select the parent element">⤴ parent</button>
         <span class="model"></span>
         <button class="x" title="close">✕</button>
       </div>
@@ -257,6 +274,17 @@
             <button data-mode="freedom">freedom</button>
           </div>
           <button class="prun">rethink ✦</button>
+        </div>
+        <div class="pmax">
+          <div class="pmaxhead">
+            <span class="lab">max output</span>
+            <span class="val"><b class="pmaxnum">1024</b> tokens</span>
+          </div>
+          <input type="range" class="pmaxslider" min="128" max="8192" step="64" value="1024" />
+          <div class="pmaxinfo">
+            <span>input <b class="pmaxin">~0</b> tok (html+css)</span>
+            <span class="cmp pmaxcmp">default = input + 20%</span>
+          </div>
         </div>
       </div>
       <div class="ptabs">
@@ -298,9 +326,82 @@
     panel.querySelector(".x").addEventListener("click", deselect);
     panel.querySelectorAll(".ptab").forEach((t) => t.addEventListener("click", () => switchTab(t.dataset.tab)));
     panel.querySelector(".phead").addEventListener("mousedown", startDrag);
+    panel.querySelector(".parent").addEventListener("click", selectParent);
 
+    const slider = panel.querySelector(".pmaxslider");
+    slider.addEventListener("input", () => { state.maxTokens = +slider.value; paintMaxTokens(); });
+
+    syncTokenUI(true); // sets bounds + default from the current selection
+    updateParentBtn();
     positionPanel(el);
     setTimeout(() => { ta.focus(); grow(); }, 0);
+  }
+
+  // Recompute the slider bounds/default from the selected block's html+css.
+  // resetValue=true snaps the chosen max back to the (input + 20%) default.
+  function syncTokenUI(resetValue) {
+    const { inputTok, minTok, maxTok, def } = tokenDefaults();
+    state.inputTokens = inputTok;
+    const slider = panel.querySelector(".pmaxslider");
+    if (!slider) return;
+    slider.min = String(minTok);
+    slider.max = String(maxTok);
+    if (resetValue || state.maxTokens < minTok || state.maxTokens > maxTok) state.maxTokens = def;
+    slider.value = String(state.maxTokens);
+    const inEl = panel.querySelector(".pmaxin");
+    if (inEl) inEl.textContent = "~" + inputTok.toLocaleString();
+    paintMaxTokens();
+  }
+  function paintMaxTokens() {
+    const num = panel.querySelector(".pmaxnum");
+    if (num) num.textContent = state.maxTokens.toLocaleString();
+    const cmp = panel.querySelector(".pmaxcmp");
+    if (cmp) {
+      const inTok = state.inputTokens || 0;
+      const ratio = inTok ? state.maxTokens / inTok : 1;
+      let label;
+      if (ratio < 0.75) label = "↓ less code than input";
+      else if (ratio <= 1.25) label = "≈ similar to input";
+      else if (ratio <= 2.5) label = "↑ more room than input";
+      else label = "↑↑ much more than input";
+      cmp.textContent = label;
+    }
+  }
+
+  // Escalate the selection to the parent element (children often fill the parent,
+  // so the parent is hard to hover). Keeps the panel + prompt; refreshes everything.
+  function selectParent() {
+    const cur = state.selected;
+    const p = cur && cur.parentElement;
+    if (!p || p === document.documentElement || p.closest("#rethink-root")) return;
+    // revert any applied result before moving up, so we start clean on the parent
+    if (state.undo) { state.undo(); state.undo = null; }
+    state.selected = p;
+    state.originalHtml = p.outerHTML;
+    state.harvestedCss = collectCss(p);
+    state.htmlApplied = false;
+    state.htmlUndo = null;
+    state.lastAppliedCss = "";
+    removeCss();
+    state.phase = "selected";
+    // reset the output panes to their waiting state
+    const setEmpty = (sel, txt) => { const n = panel.querySelector(sel); if (n) n.innerHTML = `<span class="empty">${txt}</span>`; };
+    setEmpty('[data-pane="html"]', "the diff will appear here as the model streams…");
+    setEmpty('[data-pane="css"]', "any new CSS the model adds shows here, applied live.");
+    setEmpty('[data-pane="js"]', "suggested JS shows here — never run automatically.");
+    setStatus("");
+    setFoot("");
+    syncTokenUI(true);
+    updateParentBtn();
+    drawSubtree(p, { selected: true });
+    positionPanel(p);
+    if (state.activeTab === "prompt") renderPromptPreview();
+  }
+  function updateParentBtn() {
+    const btn = panel.querySelector(".parent");
+    if (!btn) return;
+    const p = state.selected && state.selected.parentElement;
+    btn.disabled = !p || p === document.documentElement || (p.closest && p.closest("#rethink-root"));
   }
 
   // ── dragging the panel by its header ───────────────────────────────────────
@@ -468,7 +569,7 @@
     });
     port.onDisconnect.addListener(() => { if (state.phase === "loading") streamFailed("Stream disconnected."); });
 
-    port.postMessage({ type: "run", payload: { prompt, html, css, mode: state.mode } });
+    port.postMessage({ type: "run", payload: { prompt, html, css, mode: state.mode, maxTokens: state.maxTokens } });
   }
 
   function scheduleRender() {
@@ -854,6 +955,17 @@
 
   function fmtNum(n) {
     return n == null ? "?" : Number(n).toLocaleString("en-US");
+  }
+  // Rough token estimate (~4 chars/token) — good enough to size the slider.
+  function estTokens(str) { return Math.ceil((str || "").length / 4); }
+
+  // Slider bounds/default derived from the html+css we're about to send.
+  function tokenDefaults() {
+    const inputTok = estTokens(state.originalHtml) + estTokens(state.harvestedCss);
+    const minTok = 128;
+    const maxTok = Math.max(4096, Math.ceil((inputTok * 4) / 256) * 256);
+    const def = Math.min(maxTok, Math.max(minTok, Math.round(inputTok * 1.2)));
+    return { inputTok, minTok, maxTok, def };
   }
   function fmtCost(c) {
     if (typeof c !== "number") return "";
