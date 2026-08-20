@@ -29,6 +29,9 @@
     harvestedCss: "",
     previewScheduled: false,
     undo: null,
+    htmlApplied: false, // has the html block been applied to the page this run?
+    htmlUndo: null,
+    lastAppliedCss: "", // last complete-rule CSS string pushed to the page
     cssEl: null, // live-injected <style> for streamed CSS
     port: null,
     raw: "",
@@ -352,14 +355,16 @@
   function setFoot(html) { const f = panel.querySelector(".pfoot"); if (f) f.innerHTML = html; }
 
   // ── streaming ──────────────────────────────────────────────────────────────
+  // Parse the streamed fences. `closed` marks which blocks have seen their
+  // terminating ``` — that's the "block is ready to apply" signal.
   function parseFences(text) {
-    const out = { html: "", css: "", js: "" };
+    const out = { html: "", css: "", js: "", closed: { html: false, css: false, js: false } };
     if (!text) return out;
     let cur = null;
     for (const line of text.split("\n")) {
       const f = line.match(/^\s*```([a-zA-Z]*)\s*$/);
       if (f) {
-        if (cur) cur = null;
+        if (cur) { if (cur !== "_skip") out.closed[cur] = true; cur = null; }
         else { let l = (f[1] || "").toLowerCase(); if (l === "javascript") l = "js"; cur = l === "html" || l === "css" || l === "js" ? l : "_skip"; }
         continue;
       }
@@ -371,11 +376,21 @@
     return out;
   }
 
+  // Largest prefix of `css` that ends on a complete rule — so we never inject a
+  // half-written declaration like ".x{color:re".
+  function cssUpToLastRule(css) {
+    const i = css.lastIndexOf("}");
+    return i >= 0 ? css.slice(0, i + 1) : "";
+  }
+
   function startRun(prompt) {
     if (!state.selected || state.phase === "loading") return;
     // revert a previous result so a re-run diffs against the pristine original
     if (state.undo) { state.undo(); state.undo = null; }
     state.phase = "loading";
+    state.htmlApplied = false;
+    state.htmlUndo = null;
+    state.lastAppliedCss = "";
     const run = panel.querySelector(".prun");
     if (run) run.disabled = true;
     setFoot("");
@@ -431,11 +446,20 @@
       if (s.html) htmlPane.innerHTML = renderDiff(state.originalHtml, s.html);
       else htmlPane.innerHTML = `<span class="empty">waiting for the html block…</span>`;
     }
-    // CSS tab: show + apply live
+    // CSS tab: show the raw stream, but only inject COMPLETE rules to the page,
+    // and only when they actually changed (so the page isn't restyled per char).
     const cssPane = panel.querySelector('[data-pane="css"]');
     if (cssPane) cssPane.textContent = s.css || "";
     if (!s.css && cssPane) cssPane.innerHTML = `<span class="empty">no extra CSS.</span>`;
-    if (s.css) applyCss(s.css);
+    if (s.css) {
+      const ready = s.closed.css ? s.css : cssUpToLastRule(s.css);
+      if (ready && ready !== state.lastAppliedCss) { applyCss(ready); state.lastAppliedCss = ready; }
+    }
+
+    // HTML: apply the whole block the moment it's complete (or the stream ends).
+    // One atomic apply — never a partial tag — and guarded so it happens once.
+    if (!state.htmlApplied && s.html && (s.closed.html || done)) applyHtmlNow(s.html);
+
     // JS tab: show only
     const jsPane = panel.querySelector('[data-pane="js"]');
     if (jsPane) jsPane.textContent = s.js || "";
@@ -445,7 +469,20 @@
     panel.querySelector('[data-tab="css"]')?.classList.toggle("has", !!s.css);
     panel.querySelector('[data-tab="js"]')?.classList.toggle("has", !!s.js);
 
+    if (state.htmlApplied && !done) setStatus(`<span class="spin"></span> applied · streaming`);
     if (done) setStatus(`done`);
+  }
+
+  // Apply the html block once; records the undo and flashes. Returns success.
+  function applyHtmlNow(html) {
+    try {
+      state.htmlUndo = applyHtml(html); // parses + applies per mode, updates state.selected
+      state.htmlApplied = true;
+      flash(state.selected);
+      return true;
+    } catch (_) {
+      return false; // e.g. fence closed early / not yet valid — retry at done
+    }
   }
 
   function finishRun() {
@@ -454,14 +491,15 @@
     if (run) run.disabled = false;
     if (!s.html) { streamFailed("Model returned no html block."); return; }
 
-    try {
-      const htmlUndo = applyHtml(s.html);
-      const cssEl = state.cssEl;
-      state.undo = () => { htmlUndo && htmlUndo(); removeCss(); };
-      if (cssEl) finalizeCss(); // keep the injected CSS as part of the result
-      flash(state.selected);
-      state.phase = "done";
-    } catch (e) { streamFailed("Could not apply: " + e.message); return; }
+    // The html block usually applied mid-stream; if it never did (e.g. no closing
+    // fence), apply it now. Then commit the final complete CSS.
+    if (!state.htmlApplied && !applyHtmlNow(s.html)) { streamFailed("Could not apply the returned HTML."); return; }
+    if (s.css) {
+      const ready = s.closed.css ? s.css : cssUpToLastRule(s.css);
+      if (ready && ready !== state.lastAppliedCss) { applyCss(ready); state.lastAppliedCss = ready; }
+    }
+    state.undo = () => { state.htmlUndo && state.htmlUndo(); removeCss(); };
+    state.phase = "done";
 
     const jsBtn = state.sections.js && state.mode === "freedom"
       ? `<button class="warn" data-act="runjs" title="runs the suggested JS in the page, once">⚠ run JS once</button>` : "";
@@ -500,7 +538,6 @@
     }
     state.cssEl.textContent = css;
   }
-  function finalizeCss() { /* the live <style> stays in the page; undo removes it */ }
   function removeCss() { if (state.cssEl) { state.cssEl.remove(); state.cssEl = null; } }
 
   // Returns an undo function; updates state.selected to the applied node.
