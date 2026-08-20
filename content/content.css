@@ -1,0 +1,14 @@
+/* rethink — page-level styles.
+ * Almost all UI is rendered inside a Shadow DOM (see content.js) so page CSS
+ * can't bleed into it. These few rules only affect the host page while rethink
+ * mode is armed. */
+
+html.rethink-armed,
+html.rethink-armed * {
+  cursor: crosshair !important;
+}
+
+/* While a block is selected and being edited, let the HUD keep a normal cursor. */
+html.rethink-armed #rethink-root {
+  cursor: default;
+}

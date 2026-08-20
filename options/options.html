@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="stylesheet" href="options.css" />
+    <title>rethink · settings</title>
+  </head>
+  <body>
+    <main>
+      <h1><span class="spark">✦</span> rethink</h1>
+      <p class="sub">Bring-your-own-key configuration. Everything is stored locally in your browser.</p>
+
+      <section class="card">
+        <label for="key">OpenRouter API key <span class="byok">BYOK</span></label>
+        <div class="keyrow">
+          <input id="key" type="password" placeholder="sk-or-v1-…" autocomplete="off" spellcheck="false" />
+          <button id="reveal" class="ghost" type="button">👁</button>
+          <button id="saveKey" class="primary">Save</button>
+        </div>
+        <p class="help">Create one at <a href="https://openrouter.ai/keys" target="_blank" rel="noopener">openrouter.ai/keys</a>. Requests go straight from this extension to OpenRouter — no server in between.</p>
+        <div id="keyStatus" class="status"></div>
+      </section>
+
+      <section class="card">
+        <label>Model</label>
+        <div class="modelrow">
+          <span id="modelName" class="modelname">—</span>
+          <button id="pickModel" class="primary">Choose model…</button>
+        </div>
+        <p id="modelHelp" class="help">Opens the AI model selector (juanpe500/ai_model_selector) across OpenRouter's catalogue.</p>
+      </section>
+
+      <section class="card">
+        <label for="defaultMode">Default rewrite mode</label>
+        <select id="defaultMode">
+          <option value="everything">Restyle everything — new classes/tags/structure, ids & data preserved</option>
+          <option value="classes">Restyle classes — classes & inline styles only, structure frozen</option>
+          <option value="freedom">Full freedom — no constraints</option>
+        </select>
+      </section>
+    </main>
+
+    <script src="../vendor/model_selector.js"></script>
+    <script src="options.js"></script>
+  </body>
+</html>

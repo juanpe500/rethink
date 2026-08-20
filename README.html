@@ -1,0 +1,316 @@
+<title>rethink</title>
+<meta name="description" content="A Chrome extension that lets an AI restyle any block on any page — hover, describe, rethink. BYOK, no server." />
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap" />
+
+<style>
+  :root {
+    --ground: #f7f7fb;
+    --panel: #ffffff;
+    --panel-2: #f0f0f6;
+    --ink: #1b1b28;
+    --ink-soft: #55556b;
+    --ink-faint: #8a8aa0;
+    --line: #e3e3ee;
+    --accent: #5b5ef0;
+    --accent-2: #7c7ff6;
+    --accent-ink: #ffffff;
+    --mint: #10a37f;
+    --amber: #b7791f;
+    --glow: rgba(91, 94, 240, 0.14);
+    --code-bg: #f2f2f9;
+    --shadow: 0 18px 50px -24px rgba(30, 30, 60, 0.45);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --ground: #101019;
+      --panel: #1a1a28;
+      --panel-2: #22223440;
+      --ink: #f1f1f7;
+      --ink-soft: #b0b0c6;
+      --ink-faint: #7a7a96;
+      --line: #2c2c40;
+      --accent: #7c7ff6;
+      --accent-2: #9a9dfb;
+      --accent-ink: #10101a;
+      --mint: #34d399;
+      --amber: #fbbf24;
+      --glow: rgba(124, 127, 246, 0.22);
+      --code-bg: #14141f;
+      --shadow: 0 24px 60px -28px rgba(0, 0, 0, 0.75);
+    }
+  }
+  :root[data-theme="dark"] {
+    --ground: #101019;
+    --panel: #1a1a28;
+    --panel-2: #22223440;
+    --ink: #f1f1f7;
+    --ink-soft: #b0b0c6;
+    --ink-faint: #7a7a96;
+    --line: #2c2c40;
+    --accent: #7c7ff6;
+    --accent-2: #9a9dfb;
+    --accent-ink: #10101a;
+    --mint: #34d399;
+    --amber: #fbbf24;
+    --glow: rgba(124, 127, 246, 0.22);
+    --code-bg: #14141f;
+    --shadow: 0 24px 60px -28px rgba(0, 0, 0, 0.75);
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--ground);
+    color: var(--ink);
+    font-family: "IBM Plex Sans", system-ui, sans-serif;
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+  .wrap { max-width: 940px; margin: 0 auto; padding: 0 24px; }
+  h1, h2, h3 { font-family: "Bricolage Grotesque", system-ui, sans-serif; text-wrap: balance; margin: 0; }
+  code, .mono { font-family: "IBM Plex Mono", ui-monospace, monospace; }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+
+  /* ── hero ──────────────────────────────────────────────── */
+  .hero {
+    position: relative;
+    overflow: hidden;
+    border-bottom: 1px solid var(--line);
+    background:
+      radial-gradient(120% 90% at 82% -10%, var(--glow), transparent 55%),
+      var(--ground);
+  }
+  .hero .wrap { padding-top: 68px; padding-bottom: 60px; }
+  .eyebrow {
+    font-family: "IBM Plex Mono", monospace;
+    font-size: 12px; letter-spacing: 0.22em; text-transform: uppercase;
+    color: var(--accent); margin-bottom: 20px; display: flex; align-items: center; gap: 10px;
+  }
+  .eyebrow::before { content: "✦"; font-size: 14px; }
+  .hero h1 {
+    font-size: clamp(52px, 11vw, 104px);
+    font-weight: 800; line-height: 0.92; letter-spacing: -0.03em; margin-bottom: 18px;
+  }
+  .hero h1 .dot { color: var(--accent); }
+  .lede {
+    font-size: clamp(17px, 2.3vw, 21px); color: var(--ink-soft);
+    max-width: 34ch; margin: 0 0 28px;
+  }
+  .cta-row { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
+  .btn {
+    display: inline-flex; align-items: center; gap: 8px;
+    font-family: "IBM Plex Mono", monospace; font-size: 13px; font-weight: 500;
+    padding: 11px 18px; border-radius: 10px; border: 1px solid var(--line);
+    color: var(--ink); background: var(--panel); transition: transform .15s, border-color .15s;
+  }
+  .btn:hover { text-decoration: none; transform: translateY(-1px); border-color: var(--accent); }
+  .btn.primary { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+  .byok-note { font-family: "IBM Plex Mono", monospace; font-size: 12px; color: var(--ink-faint); }
+
+  .hero-grid { display: grid; grid-template-columns: 1fr; gap: 48px; align-items: center; }
+  @media (min-width: 780px) { .hero-grid { grid-template-columns: 1.05fr 0.95fr; } }
+
+  /* ── the signature: nested-outline inspector demo ──────── */
+  .demo { position: relative; }
+  .demo-stage {
+    position: relative; background: var(--panel); border: 1px solid var(--line);
+    border-radius: 16px; padding: 26px; box-shadow: var(--shadow);
+  }
+  .pill {
+    position: absolute; top: -14px; right: 14px; z-index: 4;
+    display: inline-flex; align-items: center; gap: 6px;
+    background: var(--accent); color: var(--accent-ink);
+    font-family: "IBM Plex Mono", monospace; font-weight: 600; font-size: 12px;
+    padding: 5px 11px; border-radius: 999px; box-shadow: 0 6px 18px -4px var(--accent);
+  }
+  .sel { position: relative; border: 2px solid var(--accent); border-radius: 10px; padding: 16px; box-shadow: 0 0 0 3px var(--glow); }
+  .out { border: 1px solid; border-radius: 7px; padding: 10px 12px; }
+  .d1 { border-color: color-mix(in srgb, var(--accent) 70%, transparent); margin-bottom: 10px; }
+  .d1 h3 { font-size: 16px; }
+  .d2-row { display: flex; gap: 10px; }
+  .d2 { flex: 1; border-color: color-mix(in srgb, var(--accent) 42%, transparent); text-align: center; font-size: 13px; color: var(--ink-soft); }
+  .d3 { border-color: color-mix(in srgb, var(--accent) 24%, transparent); }
+  .caret { margin-top: 14px; display: flex; align-items: center; gap: 8px; }
+  .caret-box {
+    flex: 1; border: 1px solid var(--accent); border-radius: 9px; padding: 7px 11px;
+    font-family: "IBM Plex Mono", monospace; font-size: 12.5px; color: var(--ink-soft); background: var(--code-bg);
+  }
+  .caret-box b { color: var(--ink); font-weight: 500; }
+  .cursor { display: inline-block; width: 7px; height: 15px; background: var(--accent); margin-left: 1px; vertical-align: -2px; animation: blink 1.1s step-end infinite; }
+  @keyframes blink { 50% { opacity: 0; } }
+  .run { font-family: "IBM Plex Mono", monospace; font-size: 12px; padding: 8px 12px; border-radius: 8px; background: var(--accent); color: var(--accent-ink); }
+  @media (prefers-reduced-motion: reduce) { .cursor { animation: none; } }
+
+  /* ── sections ──────────────────────────────────────────── */
+  section { padding: 62px 0; border-bottom: 1px solid var(--line); }
+  .sec-head { display: flex; align-items: baseline; gap: 14px; margin-bottom: 30px; }
+  .sec-num { font-family: "IBM Plex Mono", monospace; font-size: 13px; color: var(--accent); letter-spacing: .1em; }
+  .sec-head h2 { font-size: clamp(26px, 4vw, 34px); font-weight: 700; letter-spacing: -0.02em; }
+
+  .steps { display: grid; gap: 2px; background: var(--line); border: 1px solid var(--line); border-radius: 14px; overflow: hidden; }
+  .step { background: var(--panel); padding: 18px 22px; display: grid; grid-template-columns: auto 1fr; gap: 18px; align-items: start; }
+  .step .n { font-family: "IBM Plex Mono", monospace; font-size: 13px; color: var(--accent); padding-top: 2px; font-weight: 600; }
+  .step p { margin: 0; color: var(--ink-soft); }
+  .step p b { color: var(--ink); font-weight: 600; }
+  kbd { font-family: "IBM Plex Mono", monospace; font-size: .82em; background: var(--code-bg); border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 5px; padding: 1px 6px; color: var(--ink); }
+
+  /* ── modes ─────────────────────────────────────────────── */
+  .modes { display: grid; gap: 16px; }
+  @media (min-width: 720px) { .modes { grid-template-columns: repeat(3, 1fr); } }
+  .mode {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 16px;
+    padding: 22px; display: flex; flex-direction: column; gap: 14px;
+    position: relative; overflow: hidden;
+  }
+  .mode::before { content: ""; position: absolute; inset: 0 0 auto 0; height: 3px; background: linear-gradient(90deg, var(--accent), transparent); }
+  .mode h3 { font-size: 19px; font-weight: 700; }
+  .mode .free { font-family: "IBM Plex Mono", monospace; font-size: 11.5px; letter-spacing: .04em; text-transform: uppercase; color: var(--ink-faint); }
+  .mode p { margin: 0; color: var(--ink-soft); font-size: 14.5px; }
+  .guards { display: flex; flex-direction: column; gap: 8px; margin-top: auto; }
+  .guard { display: flex; gap: 9px; align-items: flex-start; font-size: 13px; color: var(--ink); }
+  .guard .ic { color: var(--mint); font-weight: 700; flex: none; line-height: 1.5; }
+  .guard.block .ic { color: var(--amber); }
+  .guard .lbl { color: var(--ink-soft); }
+  .guard b { color: var(--ink); font-weight: 600; }
+
+  /* ── architecture ──────────────────────────────────────── */
+  pre {
+    margin: 0; background: var(--code-bg); border: 1px solid var(--line); border-radius: 14px;
+    padding: 20px; overflow-x: auto; font-family: "IBM Plex Mono", monospace;
+    font-size: 12.5px; line-height: 1.75; color: var(--ink-soft);
+  }
+  pre .f { color: var(--accent); }
+  pre .c { color: var(--ink-faint); }
+  .flow { margin-top: 20px; color: var(--ink-soft); font-size: 14.5px; }
+  .flow code { color: var(--ink); background: var(--code-bg); padding: 1px 6px; border-radius: 5px; font-size: .9em; }
+
+  .limits { list-style: none; padding: 0; margin: 0; display: grid; gap: 12px; }
+  .limits li { padding-left: 26px; position: relative; color: var(--ink-soft); }
+  .limits li::before { content: "→"; position: absolute; left: 0; color: var(--accent); font-family: "IBM Plex Mono", monospace; }
+  .limits b { color: var(--ink); font-weight: 600; }
+
+  footer { padding: 40px 0 64px; color: var(--ink-faint); font-family: "IBM Plex Mono", monospace; font-size: 12.5px; }
+  footer .wrap { display: flex; flex-wrap: wrap; gap: 8px 18px; justify-content: space-between; }
+</style>
+
+<header class="hero">
+  <div class="wrap">
+    <div class="eyebrow">Chrome extension · MV3</div>
+    <div class="hero-grid">
+      <div>
+        <h1>rethink<span class="dot">.</span></h1>
+        <p class="lede">Hover any block on any page, describe how you'd rethink it, and let an AI restyle it — live, in place.</p>
+        <div class="cta-row">
+          <a class="btn primary" href="https://openrouter.ai/keys" target="_blank" rel="noopener">Get an OpenRouter key</a>
+          <a class="btn" href="https://github.com/juanpe500/ai_model_selector" target="_blank" rel="noopener">Model selector ↗</a>
+        </div>
+        <p class="byok-note" style="margin-top:18px">BYOK · no server · your key never leaves the browser</p>
+      </div>
+
+      <div class="demo" aria-hidden="true">
+        <div class="demo-stage">
+          <span class="pill">✦ rethink</span>
+          <div class="sel">
+            <div class="out d1"><h3>Card title</h3></div>
+            <div class="out d3" style="margin-bottom:10px; color:var(--ink-soft); font-size:13px;">Body copy with a link inside.</div>
+            <div class="d2-row">
+              <div class="out d2">OK</div>
+              <div class="out d2">Cancel</div>
+            </div>
+            <div class="caret">
+              <div class="caret-box"><b>make it feel like a premium pricing card</b><span class="cursor"></span></div>
+              <span class="run">↵</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</header>
+
+<main class="wrap">
+  <section>
+    <div class="sec-head"><span class="sec-num">01</span><h2>Install &amp; connect</h2></div>
+    <div class="steps">
+      <div class="step"><span class="n">1</span><p>Open <code>chrome://extensions</code>, turn on <b>Developer mode</b>, click <b>Load unpacked</b>, and select the <code>rethink-extension/</code> folder.</p></div>
+      <div class="step"><span class="n">2</span><p>Pin the ✦ icon. Click it → <b>Settings</b> → paste your OpenRouter key → <b>Save</b>.</p></div>
+      <div class="step"><span class="n">3</span><p><b>Choose model…</b> opens the full settings page with the model selector across OpenRouter's whole catalogue.</p></div>
+    </div>
+  </section>
+
+  <section>
+    <div class="sec-head"><span class="sec-num">02</span><h2>The loop</h2></div>
+    <div class="steps">
+      <div class="step"><span class="n">→</span><p><b>Activate rethink mode</b> from the popup, then hover the page — every block outlines, with <b>softer borders the deeper it nests</b>, and a ✦ rethink pill floats at its top-right.</p></div>
+      <div class="step"><span class="n">→</span><p><b>Click a block</b> to lock it. The pill morphs into a textarea that grows from a single line as you type.</p></div>
+      <div class="step"><span class="n">→</span><p>Type your instruction, pick a mode, press <kbd>Enter</kbd>. The block's HTML plus its matching CSS go to your model; the reply is applied in place.</p></div>
+      <div class="step"><span class="n">→</span><p><b>Undo · again · done</b> appear afterward. <kbd>Esc</kbd> exits.</p></div>
+    </div>
+  </section>
+
+  <section>
+    <div class="sec-head"><span class="sec-num">03</span><h2>Three modes, three contracts</h2></div>
+    <div class="modes">
+      <div class="mode">
+        <h3>Restyle everything</h3>
+        <p>Rename or add classes, introduce tags, change the structure freely.</p>
+        <div class="guards">
+          <div class="guard"><span class="ic">✓</span><span class="lbl">Every <b>id</b> &amp; <b>data-*</b> preserved</span></div>
+          <div class="guard"><span class="ic">✓</span><span class="lbl">Kept-by-id nodes grafted back <b>live</b> — listeners survive</span></div>
+          <div class="guard"><span class="ic">✓</span><span class="lbl">Dropped ids stashed in a hidden <b>vault</b></span></div>
+        </div>
+      </div>
+      <div class="mode">
+        <h3>Restyle classes</h3>
+        <p>Only the <code>class</code> and inline <code>style</code> may change.</p>
+        <div class="guards">
+          <div class="guard"><span class="ic">✓</span><span class="lbl">Trees walked in <b>lockstep</b>, class/style copied</span></div>
+          <div class="guard block"><span class="ic">⊘</span><span class="lbl">New nodes, tag renames, id edits <b>discarded</b></span></div>
+          <div class="guard"><span class="ic">✓</span><span class="lbl">Live nodes never replaced — all listeners intact</span></div>
+        </div>
+      </div>
+      <div class="mode">
+        <h3>Full freedom</h3>
+        <p>Anything, as long as it's valid, script-free HTML.</p>
+        <div class="guards">
+          <div class="guard"><span class="ic">✓</span><span class="lbl">No structural constraints</span></div>
+          <div class="guard"><span class="ic">✓</span><span class="lbl"><code>&lt;script&gt;</code> stripped by contract</span></div>
+          <div class="guard"><span class="ic">✓</span><span class="lbl">One-click <b>undo</b> restores the original</span></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section>
+    <div class="sec-head"><span class="sec-num">04</span><h2>How it's wired</h2></div>
+    <pre><span class="f">manifest.json</span>          <span class="c">MV3 · content script on &lt;all_urls&gt; · popup · options</span>
+<span class="f">background.js</span>          <span class="c">service worker — settings, OpenRouter call, model list</span>
+                       <span class="c">(the BYOK key lives here, never in a page's JS world)</span>
+<span class="f">content/content.js</span>     <span class="c">nested-outline highlight, morphing textarea,</span>
+                       <span class="c">CSS harvest, and the three mode-enforcing appliers</span>
+<span class="f">popup/</span>                 <span class="c">Main (activate · mode · model) · Settings (BYOK key)</span>
+<span class="f">options/</span>               <span class="c">full-page config; hosts the ai_model_selector modal</span>
+<span class="f">vendor/</span>                <span class="c">juanpe500/ai_model_selector, vendored (MIT)</span></pre>
+    <p class="flow">Popup arms the tab → the content script highlights &amp; harvests → sends <code>{prompt, html, css, mode}</code> to the worker → the worker calls OpenRouter with a mode-specific system prompt → the content script applies the reply under that mode's rules.</p>
+  </section>
+
+  <section>
+    <div class="sec-head"><span class="sec-num">05</span><h2>Known edges</h2></div>
+    <ul class="limits">
+      <li>Runs in the <b>top frame only</b> — cross-origin iframes aren't reached.</li>
+      <li>Cross-origin stylesheets <b>can't be read</b> for CSS harvest (browser security) and are skipped.</li>
+      <li>Can't run on <code>chrome://</code>, the Web Store, or other privileged pages.</li>
+      <li>Listener re-hooking covers elements kept by <b>id</b>; listeners on intermediate nodes the AI restructures away are lost by design.</li>
+    </ul>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <span>rethink · v0.1.0</span>
+    <span>BYOK OpenRouter · no server · MIT model selector</span>
+  </div>
+</footer>

@@ -1,0 +1,41 @@
+{
+  "manifest_version": 3,
+  "name": "rethink",
+  "version": "0.1.0",
+  "description": "Hover any block on any page, describe how you'd rethink it, and let an AI restyle it live. BYOK OpenRouter — no server.",
+  "action": {
+    "default_popup": "popup/popup.html",
+    "default_title": "rethink",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "options_page": "options/options.html",
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "permissions": ["storage", "scripting", "activeTab", "tabs"],
+  "host_permissions": ["https://openrouter.ai/*", "<all_urls>"],
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content/content.js"],
+      "css": ["content/content.css"],
+      "run_at": "document_idle",
+      "all_frames": false
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["vendor/model_selector.js"],
+      "matches": ["<all_urls>"]
+    }
+  ]
+}

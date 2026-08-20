@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="stylesheet" href="popup.css" />
+    <title>rethink</title>
+  </head>
+  <body>
+    <header>
+      <div class="brand"><span class="spark">✦</span> rethink</div>
+      <nav class="tabs">
+        <button class="tab on" data-tab="main">Main</button>
+        <button class="tab" data-tab="settings">Settings</button>
+      </nav>
+    </header>
+
+    <!-- MAIN -->
+    <section class="panel on" data-panel="main">
+      <button id="toggle" class="toggle">
+        <span class="dot"></span>
+        <span class="label">Activate rethink mode</span>
+      </button>
+      <p class="help">
+        Hover any block on the page — it outlines with softer borders the deeper it
+        nests. Click a block, describe the change, hit <kbd>Enter</kbd>.
+        <kbd>Esc</kbd> exits.
+      </p>
+
+      <div class="field">
+        <label>Mode</label>
+        <div class="modepick" id="modepick">
+          <button data-mode="everything">
+            <b>Restyle everything</b><small>new classes, tags & structure — ids/data kept</small>
+          </button>
+          <button data-mode="classes">
+            <b>Restyle classes</b><small>classes & inline styles only — structure frozen</small>
+          </button>
+          <button data-mode="freedom">
+            <b>Full freedom</b><small>no constraints</small>
+          </button>
+        </div>
+      </div>
+
+      <div class="field">
+        <label>Model</label>
+        <div class="modelrow">
+          <span id="modelName" class="modelname">—</span>
+          <button id="pickModel" class="ghost">Choose…</button>
+        </div>
+      </div>
+
+      <div id="warnKey" class="warn" hidden>
+        No API key yet — add one in <a href="#" data-goto="settings">Settings</a>.
+      </div>
+    </section>
+
+    <!-- SETTINGS -->
+    <section class="panel" data-panel="settings">
+      <div class="field">
+        <label for="key">OpenRouter API key <span class="byok">BYOK · stored only in your browser</span></label>
+        <div class="keyrow">
+          <input id="key" type="password" placeholder="sk-or-v1-…" autocomplete="off" spellcheck="false" />
+          <button id="reveal" class="ghost" type="button" title="show / hide">👁</button>
+        </div>
+        <p class="help">
+          Get one at <span class="mono">openrouter.ai/keys</span>. The key never leaves
+          your machine — requests go straight from the extension to OpenRouter.
+        </p>
+      </div>
+
+      <div class="field">
+        <label>Default model</label>
+        <div class="modelrow">
+          <span id="modelName2" class="modelname">—</span>
+          <button id="pickModel2" class="ghost">Choose…</button>
+        </div>
+      </div>
+
+      <div class="field">
+        <label>Default mode</label>
+        <select id="defaultMode">
+          <option value="everything">Restyle everything</option>
+          <option value="classes">Restyle classes</option>
+          <option value="freedom">Full freedom</option>
+        </select>
+      </div>
+
+      <button id="save" class="primary">Save settings</button>
+      <div id="saved" class="saved" hidden>Saved ✓</div>
+    </section>
+
+    <script src="popup.js"></script>
+  </body>
+</html>

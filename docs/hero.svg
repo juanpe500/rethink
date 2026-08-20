@@ -1,0 +1,64 @@
+<svg width="1200" height="480" viewBox="0 0 1200 480" fill="none" xmlns="http://www.w3.org/2000/svg" font-family="'Segoe UI', system-ui, -apple-system, sans-serif">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1200" y2="480" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#12121d"/>
+      <stop offset="1" stop-color="#0d0d16"/>
+    </linearGradient>
+    <radialGradient id="glow" cx="0.85" cy="0.1" r="0.7">
+      <stop offset="0" stop-color="#7c7ff6" stop-opacity="0.22"/>
+      <stop offset="1" stop-color="#7c7ff6" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="pill" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#6d70f2"/>
+      <stop offset="1" stop-color="#8a8df8"/>
+    </linearGradient>
+  </defs>
+
+  <rect width="1200" height="480" rx="18" fill="url(#bg)"/>
+  <rect width="1200" height="480" rx="18" fill="url(#glow)"/>
+
+  <!-- left column -->
+  <text x="70" y="112" fill="#8a8df8" font-size="15" font-weight="600" letter-spacing="4">✦  CHROME EXTENSION · MV3</text>
+  <text x="66" y="232" fill="#f1f1f7" font-size="128" font-weight="800" letter-spacing="-5">rethink</text>
+  <circle cx="585" cy="222" r="14" fill="#7c7ff6"/>
+
+  <text x="70" y="300" fill="#b0b0c6" font-size="26" font-weight="400">Hover any block on any page, describe how</text>
+  <text x="70" y="338" fill="#b0b0c6" font-size="26" font-weight="400">you'd rethink it, and let an AI restyle it —</text>
+  <text x="70" y="376" fill="#b0b0c6" font-size="26" font-weight="400">live, in place.</text>
+
+  <text x="70" y="432" fill="#7a7a96" font-size="15" font-family="'Cascadia Code','Consolas',monospace">BYOK · no server · your key never leaves the browser</text>
+
+  <!-- right column: the inspector demo -->
+  <g>
+    <rect x="726" y="70" width="420" height="342" rx="16" fill="#1a1a28" stroke="#2c2c40"/>
+
+    <!-- glow ring + selected block -->
+    <rect x="748" y="112" width="376" height="256" rx="12" fill="#7c7ff6" opacity="0.12"/>
+    <rect x="752" y="116" width="368" height="248" rx="11" fill="none" stroke="#7c7ff6" stroke-width="2"/>
+
+    <!-- pill -->
+    <rect x="1004" y="58" width="104" height="30" rx="15" fill="url(#pill)"/>
+    <text x="1056" y="78" fill="#10101a" font-size="14" font-weight="700" text-anchor="middle" font-family="'Cascadia Code','Consolas',monospace">✦ rethink</text>
+
+    <!-- d1: title -->
+    <rect x="772" y="136" width="328" height="46" rx="7" fill="none" stroke="#7c7ff6" stroke-opacity="0.6"/>
+    <text x="790" y="165" fill="#f1f1f7" font-size="18" font-weight="700">Card title</text>
+
+    <!-- d3: body -->
+    <rect x="772" y="192" width="328" height="40" rx="7" fill="none" stroke="#7c7ff6" stroke-opacity="0.28"/>
+    <text x="790" y="217" fill="#b0b0c6" font-size="15">Body copy with a link inside.</text>
+
+    <!-- d2 row -->
+    <rect x="772" y="242" width="158" height="40" rx="7" fill="none" stroke="#7c7ff6" stroke-opacity="0.42"/>
+    <text x="851" y="267" fill="#b0b0c6" font-size="15" text-anchor="middle">OK</text>
+    <rect x="942" y="242" width="158" height="40" rx="7" fill="none" stroke="#7c7ff6" stroke-opacity="0.42"/>
+    <text x="1021" y="267" fill="#b0b0c6" font-size="15" text-anchor="middle">Cancel</text>
+
+    <!-- morphed textarea -->
+    <rect x="772" y="296" width="284" height="52" rx="9" fill="#14141f" stroke="#7c7ff6"/>
+    <text x="788" y="317" fill="#f1f1f7" font-size="13.5" font-family="'Cascadia Code','Consolas',monospace">make it feel like a premium</text>
+    <text x="788" y="336" fill="#f1f1f7" font-size="13.5" font-family="'Cascadia Code','Consolas',monospace">pricing card<tspan fill="#7c7ff6">▍</tspan></text>
+    <rect x="1064" y="296" width="52" height="52" rx="9" fill="#7c7ff6"/>
+    <text x="1090" y="329" fill="#10101a" font-size="20" font-weight="700" text-anchor="middle">↵</text>
+  </g>
+</svg>
