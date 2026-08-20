@@ -1,10 +1,11 @@
 /* rethink — content script.
  *
  * Lifecycle: injected on every page but dormant until the popup arms it.
- *   hovering  → draw a nested-outline highlight under the cursor + a "rethink" tag
- *   selected  → lock a block, the tag morphs into an auto-growing textarea
- *   loading   → prompt+HTML+CSS sent to the background → OpenRouter
- *   done      → the block is redrawn per the chosen mode (with undo)
+ *   hovering  → nested-outline highlight under the cursor + a "rethink" tag
+ *   selected  → a side panel docks beside the block: prompt input + HTML/CSS/JS tabs
+ *   loading   → the model streams; deltas fill the tabs live, CSS applies live,
+ *               the HTML tab shows a red/green diff vs the original
+ *   done      → the HTML is applied under the chosen mode (with undo) and flashes
  *
  * All rethink UI lives in a Shadow DOM host so the page's own CSS can't touch it.
  */
@@ -13,9 +14,10 @@
   if (window.__rethinkLoaded) return;
   window.__rethinkLoaded = true;
 
-  const MAX_DEPTH = 4; // how deep the nested outline goes
-  const MAX_BOXES = 120; // hard cap so huge subtrees stay cheap
+  const MAX_DEPTH = 4;
+  const MAX_BOXES = 120;
   const PRESERVE_ATTRS = ["id", "name", "value", "href", "src", "alt", "type", "for"];
+  const DIFF_CELL_CAP = 260000; // n*m guard for the O(nm) diff
 
   const state = {
     armed: false,
@@ -23,13 +25,22 @@
     phase: "idle", // idle | hovering | selected | loading | done | error
     hovered: null,
     selected: null,
-    undo: null, // () => void
+    originalHtml: "",
+    harvestedCss: "",
+    previewScheduled: false,
+    undo: null,
+    cssEl: null, // live-injected <style> for streamed CSS
+    port: null,
+    raw: "",
+    sections: { html: "", css: "", js: "" },
+    activeTab: "html",
+    diffScheduled: false,
     rafPending: false,
     lastEvent: null,
   };
 
   // ── Shadow DOM scaffold ────────────────────────────────────────────────────
-  let host, root, styleEl, overlayLayer, hud, hudInner;
+  let host, root, overlayLayer, pill, panel;
 
   function buildUI() {
     host = document.createElement("div");
@@ -38,7 +49,7 @@
       "position:fixed;inset:0;width:0;height:0;margin:0;padding:0;border:0;z-index:2147483647;pointer-events:none;";
     root = host.attachShadow({ mode: "open" });
 
-    styleEl = document.createElement("style");
+    const styleEl = document.createElement("style");
     styleEl.textContent = SHADOW_CSS;
     root.appendChild(styleEl);
 
@@ -46,112 +57,99 @@
     overlayLayer.className = "overlay";
     root.appendChild(overlayLayer);
 
-    hud = document.createElement("div");
-    hud.className = "hud";
-    hud.style.display = "none";
-    hudInner = document.createElement("div");
-    hudInner.className = "hud-inner";
-    hud.appendChild(hudInner);
-    root.appendChild(hud);
+    pill = document.createElement("div");
+    pill.className = "pill-wrap";
+    pill.style.display = "none";
+    root.appendChild(pill);
+
+    panel = document.createElement("div");
+    panel.className = "panel";
+    panel.style.display = "none";
+    root.appendChild(panel);
 
     (document.documentElement || document.body).appendChild(host);
   }
 
   const SHADOW_CSS = `
     :host { all: initial; }
+    * { box-sizing: border-box; }
     .overlay { position: fixed; inset: 0; pointer-events: none; }
-    .box {
-      position: fixed; box-sizing: border-box; pointer-events: none;
-      border: 1px solid rgba(99,102,241,0.9); border-radius: 2px;
-      transition: none;
-    }
+    .box { position: fixed; box-sizing: border-box; pointer-events: none; border: 1px solid rgba(99,102,241,0.9); border-radius: 2px; }
     .box.sel { border: 2px solid rgba(99,102,241,1); box-shadow: 0 0 0 2px rgba(99,102,241,0.25); }
-    .hud {
-      position: fixed; pointer-events: none; z-index: 2;
-      font: 13px/1.35 ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, sans-serif;
+
+    .pill-wrap { position: fixed; pointer-events: none; z-index: 2; font: 13px ui-sans-serif, system-ui, sans-serif; }
+    .pill { display: inline-flex; align-items: center; gap: 6px; background: #6366f1; color: #fff; padding: 3px 9px; border-radius: 999px; font-weight: 600; box-shadow: 0 2px 8px rgba(0,0,0,.25); white-space: nowrap; }
+
+    .panel {
+      position: fixed; width: 384px; max-width: 92vw; max-height: 78vh;
+      display: flex; flex-direction: column; pointer-events: auto; z-index: 3;
+      background: #17172a; color: #ececf4; border: 1px solid #33334d; border-radius: 12px;
+      box-shadow: 0 18px 50px rgba(0,0,0,.5); overflow: hidden;
+      font: 13px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
     }
-    .hud-inner { pointer-events: auto; }
-    .tag {
-      display: inline-flex; align-items: center; gap: 6px;
-      background: #6366f1; color: #fff; padding: 3px 9px; border-radius: 999px;
-      font-weight: 600; letter-spacing: .2px; box-shadow: 0 2px 8px rgba(0,0,0,.25);
-      cursor: pointer; user-select: none; white-space: nowrap;
-    }
-    .tag .spark { font-size: 12px; opacity: .9; }
-    .editor {
-      background: #1e1e2e; color: #f4f4f8; border: 1px solid #6366f1;
-      border-radius: 10px; padding: 8px; box-shadow: 0 8px 28px rgba(0,0,0,.4);
-      width: 340px; max-width: 60vw;
-    }
-    .editor textarea {
-      width: 100%; box-sizing: border-box; resize: none; overflow: hidden;
-      background: transparent; color: inherit; border: 0; outline: 0;
-      font: inherit; line-height: 1.4; min-height: 20px; max-height: 40vh; padding: 2px 2px;
-    }
-    .editor .row { display: flex; align-items: center; justify-content: space-between; margin-top: 6px; gap: 8px; }
-    .editor .modepick { display: flex; gap: 4px; }
-    .editor .modepick button {
-      font: 11px/1 inherit; padding: 4px 7px; border-radius: 6px; cursor: pointer;
-      border: 1px solid #3a3a52; background: #2a2a3e; color: #c9c9db;
-    }
-    .editor .modepick button.on { background: #6366f1; border-color: #6366f1; color: #fff; }
-    .editor .hint { font-size: 11px; color: #9a9ab0; }
-    .editor .go {
-      border: 0; background: #6366f1; color: #fff; border-radius: 6px;
-      padding: 5px 12px; font: 600 12px/1 inherit; cursor: pointer;
-    }
-    .editor .go:disabled { opacity: .5; cursor: default; }
-    .toast {
-      display: inline-flex; align-items: center; gap: 10px;
-      background: #1e1e2e; color: #f4f4f8; border: 1px solid #3a3a52;
-      border-radius: 999px; padding: 6px 12px; box-shadow: 0 6px 20px rgba(0,0,0,.35);
-      font-weight: 500;
-    }
-    .toast button {
-      border: 0; background: transparent; color: #a5b4fc; cursor: pointer;
-      font: 600 12px/1 inherit; padding: 2px 4px;
-    }
-    .toast.err { border-color: #ef4444; }
-    .toast.err .msg { color: #fca5a5; max-width: 360px; }
-    .spin { width: 12px; height: 12px; border: 2px solid #6366f1; border-top-color: transparent;
-      border-radius: 50%; display: inline-block; animation: rspin .7s linear infinite; }
+    .phead { display: flex; align-items: center; gap: 8px; padding: 9px 11px; border-bottom: 1px solid #2a2a44; }
+    .phead .ttl { font-weight: 700; letter-spacing: .2px; }
+    .phead .ttl .spk { color: #a5b4fc; }
+    .phead .model { margin-left: auto; font: 11px ui-monospace, monospace; color: #8888a6; max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .phead .x { border: 0; background: transparent; color: #8888a6; cursor: pointer; font-size: 15px; padding: 0 2px; }
+    .phead .x:hover { color: #fff; }
+
+    .pprompt { padding: 10px 11px; border-bottom: 1px solid #2a2a44; }
+    .pinput { width: 100%; resize: none; overflow: hidden; background: #10101e; color: #f4f4f8; border: 1px solid #33334d; border-radius: 8px; padding: 8px 9px; font: inherit; line-height: 1.4; min-height: 20px; max-height: 30vh; outline: none; }
+    .pinput:focus { border-color: #6366f1; }
+    .prow { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-top: 8px; }
+    .pmodes { display: flex; gap: 4px; }
+    .pmodes button { font: 11px ui-sans-serif, system-ui, sans-serif; padding: 4px 8px; border-radius: 6px; cursor: pointer; border: 1px solid #33334d; background: #23233a; color: #c9c9db; }
+    .pmodes button.on { background: #6366f1; border-color: #6366f1; color: #fff; }
+    .prun { border: 0; background: #6366f1; color: #fff; border-radius: 7px; padding: 6px 13px; font: 600 12px ui-sans-serif, system-ui, sans-serif; cursor: pointer; }
+    .prun:disabled { opacity: .55; cursor: default; }
+
+    .ptabs { display: flex; align-items: center; gap: 2px; padding: 6px 8px 0; border-bottom: 1px solid #2a2a44; }
+    .ptab { position: relative; border: 0; background: transparent; color: #9a9ab0; cursor: pointer; padding: 6px 11px; font: 600 12px ui-sans-serif, system-ui, sans-serif; border-radius: 7px 7px 0 0; }
+    .ptab.on { color: #fff; background: #20203a; }
+    .ptab .dot { display: none; width: 6px; height: 6px; border-radius: 50%; background: #34d399; position: absolute; top: 5px; right: 4px; }
+    .ptab.has .dot { display: block; }
+    .pstatus { margin-left: auto; font: 11px ui-monospace, monospace; color: #8888a6; padding-right: 4px; display: flex; align-items: center; gap: 6px; }
+    .spin { width: 10px; height: 10px; border: 2px solid #6366f1; border-top-color: transparent; border-radius: 50%; display: inline-block; animation: rspin .7s linear infinite; }
     @keyframes rspin { to { transform: rotate(360deg); } }
+
+    .pbody { flex: 1; min-height: 90px; overflow: auto; background: #101019; }
+    .pane { display: none; margin: 0; padding: 10px 11px; font: 12px/1.55 ui-monospace, "Cascadia Code", Consolas, monospace; white-space: pre-wrap; word-break: break-word; color: #c7c7dd; }
+    .pane.on { display: block; }
+    .pane .add { background: rgba(52,211,153,.16); color: #9ff0cf; display: block; }
+    .pane .del { background: rgba(239,68,68,.16); color: #fca5a5; display: block; text-decoration: none; }
+    .pane .ctx { display: block; color: #8a8aa4; }
+    .pane .empty { color: #6a6a86; font-style: italic; }
+    .pane .sys { color: #7f7f9e; }
+    .pane .sep { color: #6366f1; font-weight: 700; display: block; margin: 8px 0; }
+    .pane .hl { background: rgba(99,102,241,.42); color: #fff; border-radius: 3px; padding: 0 2px; box-shadow: 0 0 0 1px rgba(129,140,248,.6); }
+
+    .pfoot { display: flex; align-items: center; gap: 8px; padding: 9px 11px; border-top: 1px solid #2a2a44; flex-wrap: wrap; }
+    .pfoot button { border: 1px solid #33334d; background: #23233a; color: #e6e6f2; border-radius: 7px; padding: 5px 11px; font: 600 12px ui-sans-serif, system-ui, sans-serif; cursor: pointer; }
+    .pfoot button.primary { background: #6366f1; border-color: #6366f1; color: #fff; }
+    .pfoot button.warn { border-color: #b45309; color: #fbbf24; }
+    .pfoot .msg { color: #fca5a5; font: 12px ui-sans-serif, system-ui, sans-serif; flex: 1; }
+    .pfoot .ok { color: #34d399; font-weight: 600; }
   `;
 
   // ── highlight drawing ──────────────────────────────────────────────────────
-  function clearBoxes() {
-    overlayLayer.textContent = "";
-  }
-
+  function clearBoxes() { overlayLayer.textContent = ""; }
   function rectVisible(r) {
-    return (
-      r.width > 0 &&
-      r.height > 0 &&
-      r.bottom > 0 &&
-      r.right > 0 &&
-      r.top < innerHeight &&
-      r.left < innerWidth
-    );
+    return r.width > 0 && r.height > 0 && r.bottom > 0 && r.right > 0 && r.top < innerHeight && r.left < innerWidth;
   }
-
-  // Outline `el` and its descendants; deeper = softer border (as requested).
   function drawSubtree(el, { selected = false } = {}) {
     clearBoxes();
     if (!el) return;
     const frag = document.createDocumentFragment();
     let count = 0;
-
     const addBox = (node, depth, isRoot) => {
       if (count >= MAX_BOXES) return;
       const r = node.getBoundingClientRect();
       if (!rectVisible(r)) return;
       const box = document.createElement("div");
       box.className = "box" + (isRoot && selected ? " sel" : "");
-      // depth 0 strong, fading with depth
       const alpha = Math.max(0.12, 0.9 - depth * 0.22);
-      if (!(isRoot && selected)) {
-        box.style.borderColor = `rgba(99,102,241,${alpha})`;
-      }
+      if (!(isRoot && selected)) box.style.borderColor = `rgba(99,102,241,${alpha})`;
       box.style.left = r.left + "px";
       box.style.top = r.top + "px";
       box.style.width = r.width + "px";
@@ -159,110 +157,37 @@
       frag.appendChild(box);
       count++;
     };
-
-    // BFS by depth
     let level = [el];
     for (let depth = 0; depth <= MAX_DEPTH && level.length && count < MAX_BOXES; depth++) {
       const next = [];
       for (const node of level) {
         addBox(node, depth, node === el);
-        if (depth < MAX_DEPTH) {
-          for (const child of node.children) next.push(child);
-        }
+        if (depth < MAX_DEPTH) for (const child of node.children) next.push(child);
       }
       level = next;
     }
     overlayLayer.appendChild(frag);
   }
 
-  // ── the "rethink" tag / editor HUD ─────────────────────────────────────────
-  function positionHudTopRight(el) {
+  function showPill(el) {
+    pill.innerHTML = `<span class="pill"><span style="opacity:.9">✦</span> rethink</span>`;
+    pill.style.display = "block";
+    positionPill(el);
+  }
+  function positionPill(el) {
     const r = el.getBoundingClientRect();
-    // Anchor the HUD's right edge to the block's right edge, sitting just above it.
-    hud.style.display = "block";
-    hud.style.left = "0px";
-    hud.style.top = "0px";
-    // measure after render
+    pill.style.left = "0px"; pill.style.top = "0px";
     requestAnimationFrame(() => {
-      const hw = hudInner.offsetWidth || 80;
-      const hh = hudInner.offsetHeight || 24;
-      let left = r.right - hw;
-      let top = r.top - hh - 6;
-      if (top < 4) top = r.top + 6; // flip inside if no room above
-      if (left < 4) left = 4;
-      if (left + hw > innerWidth - 4) left = innerWidth - hw - 4;
-      hud.style.left = left + "px";
-      hud.style.top = top + "px";
+      const w = pill.firstElementChild.offsetWidth || 84;
+      const h = pill.firstElementChild.offsetHeight || 24;
+      let left = r.right - w, top = r.top - h - 6;
+      if (top < 4) top = r.top + 6;
+      left = Math.max(4, Math.min(left, innerWidth - w - 4));
+      pill.style.left = left + "px";
+      pill.style.top = top + "px";
     });
   }
-
-  function showTag(el) {
-    hudInner.className = "hud-inner";
-    hudInner.innerHTML = `<span class="tag"><span class="spark">✦</span>rethink</span>`;
-    positionHudTopRight(el);
-  }
-
-  function showEditor(el) {
-    hudInner.className = "hud-inner";
-    hudInner.innerHTML = `
-      <div class="editor">
-        <textarea rows="1" placeholder="describe how to rethink this block…  (Enter to run · Esc to cancel)"></textarea>
-        <div class="row">
-          <div class="modepick">
-            <button data-mode="everything">everything</button>
-            <button data-mode="classes">classes</button>
-            <button data-mode="freedom">freedom</button>
-          </div>
-          <button class="go">rethink ✦</button>
-        </div>
-      </div>`;
-    const ta = hudInner.querySelector("textarea");
-    const go = hudInner.querySelector(".go");
-    const modeBtns = [...hudInner.querySelectorAll(".modepick button")];
-    const paintMode = () =>
-      modeBtns.forEach((b) => b.classList.toggle("on", b.dataset.mode === state.mode));
-    paintMode();
-    modeBtns.forEach((b) =>
-      b.addEventListener("click", (e) => {
-        e.stopPropagation();
-        state.mode = b.dataset.mode;
-        chrome.storage.local.set({ rethink_mode: state.mode });
-        paintMode();
-        ta.focus();
-      })
-    );
-
-    const grow = () => {
-      ta.style.height = "auto";
-      ta.style.height = Math.min(ta.scrollHeight, window.innerHeight * 0.4) + "px";
-    };
-    ta.addEventListener("input", grow);
-    ta.addEventListener("keydown", (e) => {
-      e.stopPropagation();
-      if (e.key === "Enter" && !e.shiftKey) {
-        e.preventDefault();
-        submit(ta.value.trim());
-      } else if (e.key === "Escape") {
-        e.preventDefault();
-        deselect();
-      }
-    });
-    go.addEventListener("click", (e) => {
-      e.stopPropagation();
-      submit(ta.value.trim());
-    });
-    positionHudTopRight(el);
-    setTimeout(() => {
-      ta.focus();
-      grow();
-    }, 0);
-  }
-
-  function showToast(html, kind = "") {
-    hudInner.className = "hud-inner";
-    hudInner.innerHTML = `<div class="toast ${kind}">${html}</div>`;
-    if (state.selected) positionHudTopRight(state.selected);
-  }
+  function hidePill() { pill.style.display = "none"; }
 
   // ── CSS harvesting ─────────────────────────────────────────────────────────
   function collectCss(el) {
@@ -274,197 +199,361 @@
     };
     push(el);
     el.querySelectorAll("*").forEach(push);
-
     const out = [];
     let budget = 40000;
     const scan = (rules) => {
       for (const rule of rules) {
         if (budget <= 0) return;
         if (rule.cssRules && (rule.media || rule.conditionText !== undefined)) {
-          // @media / @supports — descend
-          const head = rule.cssText.split("{")[0];
-          out.push(head + " {");
+          out.push(rule.cssText.split("{")[0] + " {");
           scan(rule.cssRules);
           out.push("}");
           continue;
         }
         if (rule.selectorText) {
-          const sel = rule.selectorText;
           for (const t of tokens) {
-            if (sel.includes(t)) {
-              const txt = rule.cssText;
-              out.push(txt);
-              budget -= txt.length;
-              break;
-            }
+            if (rule.selectorText.includes(t)) { out.push(rule.cssText); budget -= rule.cssText.length; break; }
           }
         }
       }
     };
     for (const sheet of document.styleSheets) {
-      try {
-        if (sheet.cssRules) scan(sheet.cssRules);
-      } catch (_) {
-        /* cross-origin sheet — skip */
-      }
+      try { if (sheet.cssRules) scan(sheet.cssRules); } catch (_) {}
       if (budget <= 0) break;
     }
     return out.join("\n");
   }
 
-  // ── submit → background → apply ────────────────────────────────────────────
-  async function submit(prompt) {
-    if (!state.selected) return;
-    state.phase = "loading";
-    const el = state.selected;
-    drawSubtree(el, { selected: true });
-    showToast(`<span class="spin"></span><span>rethinking…</span>`);
+  // ── the side panel ─────────────────────────────────────────────────────────
+  function showPanel(el) {
+    hidePill();
+    state.raw = "";
+    state.sections = { html: "", css: "", js: "" };
+    state.activeTab = "html";
+    panel.style.display = "flex";
+    panel.innerHTML = `
+      <div class="phead">
+        <span class="ttl"><span class="spk">✦</span> rethink</span>
+        <span class="model"></span>
+        <button class="x" title="close">✕</button>
+      </div>
+      <div class="pprompt">
+        <textarea class="pinput" rows="1" placeholder="describe how to rethink this block…  (Enter to run · Shift+Enter newline)"></textarea>
+        <div class="prow">
+          <div class="pmodes">
+            <button data-mode="everything">everything</button>
+            <button data-mode="classes">classes</button>
+            <button data-mode="freedom">freedom</button>
+          </div>
+          <button class="prun">rethink ✦</button>
+        </div>
+      </div>
+      <div class="ptabs">
+        <button class="ptab on" data-tab="html">HTML<span class="dot"></span></button>
+        <button class="ptab" data-tab="css">CSS<span class="dot"></span></button>
+        <button class="ptab" data-tab="js">JS<span class="dot"></span></button>
+        <button class="ptab" data-tab="prompt">Prompt</button>
+        <span class="pstatus"></span>
+      </div>
+      <div class="pbody">
+        <pre class="pane on" data-pane="html"><span class="empty">the diff will appear here as the model streams…</span></pre>
+        <pre class="pane" data-pane="css"><span class="empty">any new CSS the model adds shows here, applied live.</span></pre>
+        <pre class="pane" data-pane="js"><span class="empty">suggested JS shows here — never run automatically.</span></pre>
+        <pre class="pane" data-pane="prompt"><span class="empty">the exact prompt sent to the model — your text highlighted.</span></pre>
+      </div>
+      <div class="pfoot"></div>`;
 
-    const html = el.outerHTML;
-    const css = collectCss(el);
+    const ta = panel.querySelector(".pinput");
+    const run = panel.querySelector(".prun");
+    const modeBtns = [...panel.querySelectorAll(".pmodes button")];
+    const paintMode = () => modeBtns.forEach((b) => b.classList.toggle("on", b.dataset.mode === state.mode));
+    paintMode();
+    modeBtns.forEach((b) => b.addEventListener("click", () => {
+      state.mode = b.dataset.mode;
+      chrome.storage.local.set({ rethink_mode: state.mode });
+      paintMode();
+      schedulePreview();
+      ta.focus();
+    }));
 
+    const grow = () => { ta.style.height = "auto"; ta.style.height = Math.min(ta.scrollHeight, innerHeight * 0.3) + "px"; };
+    ta.addEventListener("input", () => { grow(); schedulePreview(); });
+    ta.addEventListener("keydown", (e) => {
+      e.stopPropagation();
+      if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); startRun(ta.value.trim()); }
+      else if (e.key === "Escape") { e.preventDefault(); deselect(); }
+    });
+    run.addEventListener("click", () => startRun(ta.value.trim()));
+    panel.querySelector(".x").addEventListener("click", deselect);
+    panel.querySelectorAll(".ptab").forEach((t) => t.addEventListener("click", () => switchTab(t.dataset.tab)));
+
+    positionPanel(el);
+    setTimeout(() => { ta.focus(); grow(); }, 0);
+  }
+
+  function positionPanel(el) {
+    if (panel.style.display === "none") return;
+    const r = el.getBoundingClientRect();
+    const pw = panel.offsetWidth || 384;
+    const ph = panel.offsetHeight || 320;
+    let left = r.right + 12;
+    if (left + pw > innerWidth - 8) left = r.left - 12 - pw; // flip to the left
+    if (left < 8) left = Math.max(8, innerWidth - pw - 8); // pin to viewport
+    let top = r.top;
+    if (top + ph > innerHeight - 8) top = innerHeight - ph - 8;
+    if (top < 8) top = 8;
+    panel.style.left = left + "px";
+    panel.style.top = top + "px";
+  }
+
+  function switchTab(tab) {
+    state.activeTab = tab;
+    panel.querySelectorAll(".ptab").forEach((t) => t.classList.toggle("on", t.dataset.tab === tab));
+    panel.querySelectorAll(".pane").forEach((p) => p.classList.toggle("on", p.dataset.pane === tab));
+    if (tab === "prompt") renderPromptPreview();
+  }
+
+  // Fetch the exact system + user message from the background and show it with
+  // the user's own instruction highlighted where it's injected.
+  function schedulePreview() {
+    if (state.previewScheduled) return;
+    state.previewScheduled = true;
+    setTimeout(() => { state.previewScheduled = false; if (state.activeTab === "prompt") renderPromptPreview(); }, 160);
+  }
+
+  async function renderPromptPreview() {
+    const pane = panel.querySelector('[data-pane="prompt"]');
+    if (!pane) return;
+    const ta = panel.querySelector(".pinput");
+    const prompt = ta ? ta.value.trim() : "";
     let resp;
     try {
       resp = await chrome.runtime.sendMessage({
-        type: "OR_CHAT",
-        payload: { prompt, html, css, mode: state.mode },
+        type: "OR_PREVIEW",
+        payload: { prompt, mode: state.mode, html: state.originalHtml, css: state.harvestedCss },
       });
-    } catch (e) {
-      resp = { ok: false, error: e.message };
-    }
+    } catch (e) { resp = null; }
+    if (!resp || !resp.ok) { pane.innerHTML = `<span class="empty">preview unavailable</span>`; return; }
 
-    if (!resp || !resp.ok) {
-      state.phase = "error";
-      const msg = (resp && resp.error) || "Unknown error";
-      showToast(
-        `<span class="msg">⚠ ${escapeHtml(msg)}</span> <button data-act="retry">retry</button> <button data-act="cancel">close</button>`,
-        "err"
-      );
-      hudInner.querySelector('[data-act="retry"]').addEventListener("click", (e) => {
-        e.stopPropagation();
-        showEditor(el);
-      });
-      hudInner.querySelector('[data-act="cancel"]').addEventListener("click", (e) => {
-        e.stopPropagation();
-        deselect();
-      });
-      return;
+    const needle = resp.promptText;
+    let userHtml = escapeHtml(resp.user);
+    const escNeedle = escapeHtml(needle);
+    const at = userHtml.indexOf(escNeedle);
+    if (at >= 0) {
+      userHtml = userHtml.slice(0, at) + `<span class="hl">${escNeedle}</span>` + userHtml.slice(at + escNeedle.length);
     }
-
-    try {
-      applyResult(el, resp.html, state.mode);
-      state.phase = "done";
-      showToast(
-        `<span>✓ rethought${resp.notes ? " — " + escapeHtml(resp.notes) : ""}</span>
-         <button data-act="undo">undo</button>
-         <button data-act="again">again</button>
-         <button data-act="done">done</button>`
-      );
-      hudInner.querySelector('[data-act="undo"]').addEventListener("click", (e) => {
-        e.stopPropagation();
-        if (state.undo) state.undo();
-        deselect();
-      });
-      hudInner.querySelector('[data-act="again"]').addEventListener("click", (e) => {
-        e.stopPropagation();
-        showEditor(state.selected);
-      });
-      hudInner.querySelector('[data-act="done"]').addEventListener("click", (e) => {
-        e.stopPropagation();
-        deselect();
-      });
-    } catch (e) {
-      state.phase = "error";
-      showToast(
-        `<span class="msg">⚠ could not apply: ${escapeHtml(e.message)}</span> <button data-act="cancel">close</button>`,
-        "err"
-      );
-      hudInner.querySelector('[data-act="cancel"]').addEventListener("click", (ev) => {
-        ev.stopPropagation();
-        deselect();
-      });
-    }
+    pane.innerHTML =
+      `<span class="sys">${escapeHtml(resp.system)}</span>` +
+      `<span class="sep">──────── user message (your instruction highlighted) ────────</span>` +
+      userHtml;
   }
 
-  // ── apply strategies (the mode contracts) ──────────────────────────────────
-  function applyResult(selectedEl, newHtml, mode) {
+  function setStatus(html) { const s = panel.querySelector(".pstatus"); if (s) s.innerHTML = html; }
+  function setFoot(html) { const f = panel.querySelector(".pfoot"); if (f) f.innerHTML = html; }
+
+  // ── streaming ──────────────────────────────────────────────────────────────
+  function parseFences(text) {
+    const out = { html: "", css: "", js: "" };
+    if (!text) return out;
+    let cur = null;
+    for (const line of text.split("\n")) {
+      const f = line.match(/^\s*```([a-zA-Z]*)\s*$/);
+      if (f) {
+        if (cur) cur = null;
+        else { let l = (f[1] || "").toLowerCase(); if (l === "javascript") l = "js"; cur = l === "html" || l === "css" || l === "js" ? l : "_skip"; }
+        continue;
+      }
+      if (cur && cur !== "_skip") out[cur] += line + "\n";
+    }
+    out.html = out.html.replace(/\s+$/, "");
+    out.css = out.css.replace(/\s+$/, "");
+    out.js = out.js.replace(/\s+$/, "");
+    return out;
+  }
+
+  function startRun(prompt) {
+    if (!state.selected || state.phase === "loading") return;
+    // revert a previous result so a re-run diffs against the pristine original
+    if (state.undo) { state.undo(); state.undo = null; }
+    state.phase = "loading";
+    const run = panel.querySelector(".prun");
+    if (run) run.disabled = true;
+    setFoot("");
+    setStatus(`<span class="spin"></span> streaming`);
+
+    const html = state.originalHtml;
+    const css = state.harvestedCss;
+
+    let port;
+    try { port = chrome.runtime.connect({ name: "rethink-stream" }); }
+    catch (e) { return streamFailed("Could not reach the extension: " + e.message); }
+    state.port = port;
+    state.raw = "";
+
+    port.onMessage.addListener((m) => {
+      if (m.type === "start") {
+        const el = panel.querySelector(".model");
+        if (el) el.textContent = m.model || "";
+      } else if (m.type === "delta") {
+        state.raw += m.text;
+        scheduleRender(false);
+      } else if (m.type === "done") {
+        state.raw = m.full || state.raw;
+        renderStream(true);
+        finishRun();
+        try { port.disconnect(); } catch (_) {}
+        state.port = null;
+      } else if (m.type === "error") {
+        if (m.full) state.raw = m.full;
+        streamFailed(m.error);
+        try { port.disconnect(); } catch (_) {}
+        state.port = null;
+      }
+    });
+    port.onDisconnect.addListener(() => { if (state.phase === "loading") streamFailed("Stream disconnected."); });
+
+    port.postMessage({ type: "run", payload: { prompt, html, css, mode: state.mode } });
+  }
+
+  function scheduleRender() {
+    if (state.diffScheduled) return;
+    state.diffScheduled = true;
+    requestAnimationFrame(() => { state.diffScheduled = false; renderStream(false); });
+  }
+
+  function renderStream(done) {
+    const s = parseFences(state.raw);
+    state.sections = s;
+
+    // HTML tab: live diff vs original
+    const htmlPane = panel.querySelector('[data-pane="html"]');
+    if (htmlPane) {
+      if (s.html) htmlPane.innerHTML = renderDiff(state.originalHtml, s.html);
+      else htmlPane.innerHTML = `<span class="empty">waiting for the html block…</span>`;
+    }
+    // CSS tab: show + apply live
+    const cssPane = panel.querySelector('[data-pane="css"]');
+    if (cssPane) cssPane.textContent = s.css || "";
+    if (!s.css && cssPane) cssPane.innerHTML = `<span class="empty">no extra CSS.</span>`;
+    if (s.css) applyCss(s.css);
+    // JS tab: show only
+    const jsPane = panel.querySelector('[data-pane="js"]');
+    if (jsPane) jsPane.textContent = s.js || "";
+    if (!s.js && jsPane) jsPane.innerHTML = `<span class="empty">no JS suggested.</span>`;
+
+    // tab activity dots
+    panel.querySelector('[data-tab="css"]')?.classList.toggle("has", !!s.css);
+    panel.querySelector('[data-tab="js"]')?.classList.toggle("has", !!s.js);
+
+    if (done) setStatus(`done`);
+  }
+
+  function finishRun() {
+    const s = state.sections;
+    const run = panel.querySelector(".prun");
+    if (run) run.disabled = false;
+    if (!s.html) { streamFailed("Model returned no html block."); return; }
+
+    try {
+      const htmlUndo = applyHtml(s.html);
+      const cssEl = state.cssEl;
+      state.undo = () => { htmlUndo && htmlUndo(); removeCss(); };
+      if (cssEl) finalizeCss(); // keep the injected CSS as part of the result
+      flash(state.selected);
+      state.phase = "done";
+    } catch (e) { streamFailed("Could not apply: " + e.message); return; }
+
+    const jsBtn = state.sections.js && state.mode === "freedom"
+      ? `<button class="warn" data-act="runjs" title="runs the suggested JS in the page, once">⚠ run JS once</button>` : "";
+    setFoot(`<span class="ok">✓ applied</span>
+      <button data-act="again">again</button>
+      <button data-act="undo">undo</button>
+      ${jsBtn}
+      <button class="primary" data-act="done">done</button>`);
+    panel.querySelector('[data-act="again"]').addEventListener("click", () => {
+      const ta = panel.querySelector(".pinput"); state.phase = "selected"; setStatus(""); ta && ta.focus();
+    });
+    panel.querySelector('[data-act="undo"]').addEventListener("click", () => { if (state.undo) state.undo(); state.undo = null; deselect(); });
+    panel.querySelector('[data-act="done"]').addEventListener("click", () => { removeSelectionButKeepResult(); });
+    const rj = panel.querySelector('[data-act="runjs"]');
+    if (rj) rj.addEventListener("click", () => runSuggestedJs(state.sections.js, rj));
+    syncToSelected();
+  }
+
+  function streamFailed(msg) {
+    state.phase = "error";
+    const run = panel.querySelector(".prun");
+    if (run) run.disabled = false;
+    setStatus("error");
+    setFoot(`<span class="msg">⚠ ${escapeHtml(msg)}</span><button class="primary" data-act="close">close</button>`);
+    panel.querySelector('[data-act="close"]')?.addEventListener("click", () => {
+      state.phase = "selected"; setStatus(""); setFoot("");
+    });
+  }
+
+  // ── applying ───────────────────────────────────────────────────────────────
+  function applyCss(css) {
+    if (!state.cssEl) {
+      state.cssEl = document.createElement("style");
+      state.cssEl.setAttribute("data-rethink-css", "");
+      (document.head || document.documentElement).appendChild(state.cssEl);
+    }
+    state.cssEl.textContent = css;
+  }
+  function finalizeCss() { /* the live <style> stays in the page; undo removes it */ }
+  function removeCss() { if (state.cssEl) { state.cssEl.remove(); state.cssEl = null; } }
+
+  // Returns an undo function; updates state.selected to the applied node.
+  function applyHtml(newHtml) {
     const tpl = document.createElement("template");
     tpl.innerHTML = (newHtml || "").trim();
     const newRoot = tpl.content.firstElementChild;
-    if (!newRoot) throw new Error("model returned no element");
-
-    if (mode === "classes") {
-      applyClassesOnly(selectedEl, newRoot);
-      return;
-    }
-    if (mode === "everything") {
-      applyEverything(selectedEl, newRoot);
-      return;
-    }
-    // freedom
-    const originalClone = selectedEl.cloneNode(true);
-    const live = tpl.content.firstElementChild;
-    selectedEl.replaceWith(live);
-    state.selected = live;
-    state.undo = () => {
-      const back = originalClone.cloneNode(true);
-      state.selected.replaceWith(back);
-      state.selected = back;
-    };
-    drawSubtree(live, { selected: true });
-    positionHudTopRight(live);
+    if (!newRoot) throw new Error("no element in html block");
+    if (state.mode === "classes") return applyClassesOnly(state.selected, newRoot);
+    if (state.mode === "everything") return applyEverything(state.selected, newRoot);
+    return applyFreedom(state.selected, newRoot);
   }
 
-  // MODE 2: only class + inline style may change, structure is frozen. We walk the
-  // live tree and the AI tree in lockstep and copy nothing but class/style where
-  // the structure matches; any structural divergence is ignored (kept as-is).
+  function applyFreedom(selectedEl, newRoot) {
+    const originalClone = selectedEl.cloneNode(true);
+    selectedEl.replaceWith(newRoot);
+    state.selected = newRoot;
+    syncToSelected();
+    return () => { const back = originalClone.cloneNode(true); state.selected.replaceWith(back); state.selected = back; syncToSelected(); };
+  }
+
   function applyClassesOnly(liveEl, aiEl) {
     const changes = [];
     const walk = (live, ai) => {
-      if (!live || !ai) return;
-      if (live.tagName !== ai.tagName) return; // divergence → freeze here
+      if (!live || !ai || live.tagName !== ai.tagName) return;
       changes.push([live, live.getAttribute("class"), live.getAttribute("style")]);
-      const nc = ai.getAttribute("class");
-      const ns = ai.getAttribute("style");
-      if (nc === null) live.removeAttribute("class");
-      else live.setAttribute("class", nc);
-      if (ns === null) live.removeAttribute("style");
-      else live.setAttribute("style", ns);
-      const lc = live.children,
-        ac = ai.children;
-      const n = Math.min(lc.length, ac.length);
+      const nc = ai.getAttribute("class"), ns = ai.getAttribute("style");
+      if (nc === null) live.removeAttribute("class"); else live.setAttribute("class", nc);
+      if (ns === null) live.removeAttribute("style"); else live.setAttribute("style", ns);
+      const lc = live.children, ac = ai.children, n = Math.min(lc.length, ac.length);
       for (let i = 0; i < n; i++) walk(lc[i], ac[i]);
     };
     walk(liveEl, aiEl);
     state.selected = liveEl;
-    state.undo = () => {
+    syncToSelected();
+    return () => {
       for (const [el, cls, sty] of changes) {
-        if (cls === null) el.removeAttribute("class");
-        else el.setAttribute("class", cls);
-        if (sty === null) el.removeAttribute("style");
-        else el.setAttribute("style", sty);
+        if (cls === null) el.removeAttribute("class"); else el.setAttribute("class", cls);
+        if (sty === null) el.removeAttribute("style"); else el.setAttribute("style", sty);
       }
+      syncToSelected();
     };
-    drawSubtree(liveEl, { selected: true });
-    positionHudTopRight(liveEl);
   }
 
-  // MODE 1: free restructure, but every id/data survives and any element the AI
-  // keeps by id is grafted back in as its ORIGINAL live node — so its event
-  // listeners come along for free ("rehook when they come back").
   function applyEverything(selectedEl, newRoot) {
     const originalClone = selectedEl.cloneNode(true);
-
-    // index every original element by id, and snapshot its preservable attrs
     const origById = new Map();
     const attrSnap = new Map();
     const indexOrig = (el) => {
       if (el.id) {
         origById.set(el.id, el);
         const snap = {};
-        for (const a of el.attributes) {
-          if (a.name.startsWith("data-") || PRESERVE_ATTRS.includes(a.name)) snap[a.name] = a.value;
-        }
+        for (const a of el.attributes) if (a.name.startsWith("data-") || PRESERVE_ATTRS.includes(a.name)) snap[a.name] = a.value;
         attrSnap.set(el.id, snap);
       }
       for (const c of el.children) indexOrig(c);
@@ -472,18 +561,16 @@
     indexOrig(selectedEl);
 
     const graft = (aiNode) => {
-      if (aiNode.nodeType !== 1) return aiNode.cloneNode(true); // text/comment
+      if (aiNode.nodeType !== 1) return aiNode.cloneNode(true);
       const id = aiNode.id;
       if (id && origById.has(id)) {
         const o = origById.get(id);
         origById.delete(id);
-        // adopt AI's attributes (styling etc.), then guarantee preserved attrs
         for (const a of [...o.attributes]) o.removeAttribute(a.name);
         for (const a of aiNode.attributes) o.setAttribute(a.name, a.value);
         const snap = attrSnap.get(id) || {};
         for (const k in snap) if (!o.hasAttribute(k)) o.setAttribute(k, snap[k]);
         o.id = id;
-        // rebuild children from AI (nested ids resolve back to originals here)
         while (o.firstChild) o.removeChild(o.firstChild);
         for (const child of aiNode.childNodes) o.appendChild(graft(child));
         return o;
@@ -495,33 +582,76 @@
     };
 
     const live = graft(newRoot);
-
-    // any id the AI dropped: keep its node (and data + listeners) in a hidden vault
     if (origById.size) {
       const vault = document.createElement("div");
       vault.setAttribute("data-rethink-preserved", "");
-      vault.hidden = true;
-      vault.style.display = "none";
+      vault.hidden = true; vault.style.display = "none";
       for (const node of origById.values()) vault.appendChild(node);
       live.appendChild(vault);
-      console.warn(
-        "[rethink] AI dropped ids; preserved in hidden vault:",
-        [...origById.keys()]
-      );
+      console.warn("[rethink] AI dropped ids; preserved in hidden vault:", [...origById.keys()]);
     }
-
     selectedEl.replaceWith(live);
     state.selected = live;
-    state.undo = () => {
-      const back = originalClone.cloneNode(true);
-      state.selected.replaceWith(back);
-      state.selected = back;
-    };
-    drawSubtree(live, { selected: true });
-    positionHudTopRight(live);
+    syncToSelected();
+    return () => { const back = originalClone.cloneNode(true); state.selected.replaceWith(back); state.selected = back; syncToSelected(); };
   }
 
-  // ── interaction ────────────────────────────────────────────────────────────
+  function flash(el) {
+    if (!el || el.nodeType !== 1) return;
+    el.classList.add("rethink-flash");
+    setTimeout(() => el.classList.remove("rethink-flash"), 950);
+  }
+
+  // User-gated, freedom-mode only: run the suggested JS once in the page world.
+  function runSuggestedJs(js, btn) {
+    if (!js) return;
+    try {
+      const s = document.createElement("script");
+      s.textContent = `(function(){try{\n${js}\n}catch(e){console.error('[rethink JS]',e);}})();`;
+      (document.head || document.documentElement).appendChild(s);
+      s.remove();
+      if (btn) { btn.textContent = "✓ ran"; btn.disabled = true; }
+    } catch (e) {
+      if (btn) btn.textContent = "JS blocked (CSP)";
+      console.warn("[rethink] page CSP blocked injected JS:", e);
+    }
+  }
+
+  // ── diff (LCS line diff over pretty-printed HTML) ──────────────────────────
+  function prettyHtml(html) {
+    return html.replace(/>\s*</g, ">\n<").replace(/\n{2,}/g, "\n").trim();
+  }
+  function lineDiff(aLines, bLines) {
+    const n = aLines.length, m = bLines.length;
+    if (n * m > DIFF_CELL_CAP) return bLines.map((l) => ({ t: "add", l }));
+    const dp = Array.from({ length: n + 1 }, () => new Int32Array(m + 1));
+    for (let i = n - 1; i >= 0; i--)
+      for (let j = m - 1; j >= 0; j--)
+        dp[i][j] = aLines[i] === bLines[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
+    const out = [];
+    let i = 0, j = 0;
+    while (i < n && j < m) {
+      if (aLines[i] === bLines[j]) { out.push({ t: "ctx", l: bLines[j] }); i++; j++; }
+      else if (dp[i + 1][j] >= dp[i][j + 1]) { out.push({ t: "del", l: aLines[i] }); i++; }
+      else { out.push({ t: "add", l: bLines[j] }); j++; }
+    }
+    while (i < n) out.push({ t: "del", l: aLines[i++] });
+    while (j < m) out.push({ t: "add", l: bLines[j++] });
+    return out;
+  }
+  function renderDiff(oldHtml, newHtml) {
+    const a = prettyHtml(oldHtml).split("\n");
+    const b = prettyHtml(newHtml).split("\n");
+    const rows = lineDiff(a, b);
+    const sym = { add: "+ ", del: "- ", ctx: "  " };
+    return rows.map((r) => `<span class="${r.t}">${escapeHtml(sym[r.t] + r.l)}</span>`).join("");
+  }
+
+  // ── selection lifecycle ────────────────────────────────────────────────────
+  function syncToSelected() {
+    if (state.selected) { drawSubtree(state.selected, { selected: true }); positionPanel(state.selected); }
+  }
+
   function onMove(e) {
     if (!state.armed || state.phase !== "hovering") return;
     state.lastEvent = e;
@@ -532,61 +662,62 @@
       const ev = state.lastEvent;
       if (!ev) return;
       const el = document.elementFromPoint(ev.clientX, ev.clientY);
-      if (!el || el === state.hovered) {
-        if (el === state.hovered && el) {
-          drawSubtree(el);
-          positionHudTopRight(el);
-        }
-        return;
-      }
+      if (!el) return;
       if (el.closest && el.closest("#rethink-root")) return;
+      if (el === state.hovered) { drawSubtree(el); positionPill(el); return; }
       state.hovered = el;
       drawSubtree(el);
-      showTag(el);
+      showPill(el);
     });
   }
 
   function onClick(e) {
     if (!state.armed) return;
-    // ignore clicks on our own HUD
     const path = e.composedPath ? e.composedPath() : [];
-    if (path.includes(host)) return;
+    if (path.includes(host)) return; // clicks inside our UI
     if (state.phase !== "hovering") return;
     const el = state.hovered || document.elementFromPoint(e.clientX, e.clientY);
     if (!el) return;
-    e.preventDefault();
-    e.stopPropagation();
-    e.stopImmediatePropagation();
+    e.preventDefault(); e.stopPropagation(); e.stopImmediatePropagation();
     select(el);
   }
 
   function select(el) {
     state.selected = el;
+    state.originalHtml = el.outerHTML;
+    state.harvestedCss = collectCss(el); // harvested once; reused for run + preview
     state.phase = "selected";
     drawSubtree(el, { selected: true });
-    showEditor(el);
+    showPanel(el);
+  }
+
+  // "done": dismiss the panel but keep the applied result on the page
+  function removeSelectionButKeepResult() {
+    state.undo = null; // commit
+    hardReset();
   }
 
   function deselect() {
+    if (state.port) { try { state.port.disconnect(); } catch (_) {} state.port = null; }
+    // if there's an uncommitted result, leave it as-is (user chose close, not undo)
+    hardReset();
+  }
+
+  function hardReset() {
     state.selected = null;
-    state.undo = null;
-    state.phase = state.armed ? "hovering" : "idle";
     state.hovered = null;
+    state.raw = "";
+    state.sections = { html: "", css: "", js: "" };
+    state.phase = state.armed ? "hovering" : "idle";
     clearBoxes();
-    hud.style.display = "none";
-    hudInner.innerHTML = "";
+    hidePill();
+    panel.style.display = "none";
+    panel.innerHTML = "";
   }
 
   function reposition() {
-    if (state.phase === "selected" || state.phase === "loading" || state.phase === "done") {
-      if (state.selected) {
-        drawSubtree(state.selected, { selected: true });
-        positionHudTopRight(state.selected);
-      }
-    } else if (state.phase === "hovering" && state.hovered) {
-      drawSubtree(state.hovered);
-      positionHudTopRight(state.hovered);
-    }
+    if (state.phase === "hovering" && state.hovered) { drawSubtree(state.hovered); positionPill(state.hovered); }
+    else if (state.selected) syncToSelected();
   }
 
   // ── arm / disarm ───────────────────────────────────────────────────────────
@@ -603,10 +734,10 @@
     window.addEventListener("resize", reposition, true);
     document.addEventListener("keydown", onGlobalKey, true);
   }
-
   function disarm() {
     state.armed = false;
-    deselect();
+    if (state.port) { try { state.port.disconnect(); } catch (_) {} state.port = null; }
+    hardReset();
     state.phase = "idle";
     document.documentElement.classList.remove("rethink-armed");
     window.removeEventListener("mousemove", onMove, true);
@@ -615,36 +746,24 @@
     window.removeEventListener("resize", reposition, true);
     document.removeEventListener("keydown", onGlobalKey, true);
   }
-
   function onGlobalKey(e) {
     if (!state.armed) return;
-    if (e.key === "Escape" && state.phase !== "selected") {
-      // Esc while just hovering exits the whole mode
+    if (e.key === "Escape" && state.phase === "hovering") {
       disarm();
       chrome.storage.local.set({ rethink_active: false });
     }
   }
 
   function escapeHtml(s) {
-    return String(s).replace(/[&<>"']/g, (c) =>
-      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])
-    );
+    return String(s).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   }
 
   // ── messaging from popup ───────────────────────────────────────────────────
   chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
-    if (msg?.type === "RETHINK_ARM") {
-      arm(msg.mode);
-      sendResponse({ ok: true, armed: true });
-    } else if (msg?.type === "RETHINK_DISARM") {
-      disarm();
-      sendResponse({ ok: true, armed: false });
-    } else if (msg?.type === "RETHINK_STATE") {
-      sendResponse({ ok: true, armed: state.armed, phase: state.phase, mode: state.mode });
-    } else if (msg?.type === "RETHINK_SET_MODE") {
-      state.mode = msg.mode || state.mode;
-      sendResponse({ ok: true, mode: state.mode });
-    }
+    if (msg?.type === "RETHINK_ARM") { arm(msg.mode); sendResponse({ ok: true, armed: true }); }
+    else if (msg?.type === "RETHINK_DISARM") { disarm(); sendResponse({ ok: true, armed: false }); }
+    else if (msg?.type === "RETHINK_STATE") { sendResponse({ ok: true, armed: state.armed, phase: state.phase, mode: state.mode }); }
+    else if (msg?.type === "RETHINK_SET_MODE") { state.mode = msg.mode || state.mode; sendResponse({ ok: true, mode: state.mode }); }
     return true;
   });
 })();

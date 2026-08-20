@@ -24,7 +24,12 @@ it rewrites that block in place. Your OpenRouter key stays in your browser; ther
 ## ✦ Highlights
 
 - **Inspector-grade hover** — nested outlines that fade with depth, and a floating `✦ rethink` tag.
-- **Prompt where you point** — the tag morphs into a textarea that grows from a single line.
+- **A side panel where you point** — click a block and a docked panel opens beside it: prompt input
+  plus **HTML / CSS / JS / Prompt** tabs.
+- **Live streaming** — the model streams token-by-token; the **HTML tab shows a red/green diff** vs
+  the original as it arrives, and **new CSS is injected live** so the page restyles before your eyes.
+- **See the real prompt** — the **Prompt tab** shows the exact system + user message being sent,
+  with your own instruction highlighted where it's injected.
 - **Three enforced contracts** — from "classes only" to "change anything", with real guardrails (below).
 - **Listeners survive** — in restructure mode, elements the AI keeps by `id` are grafted back as the
   *original live nodes*, so their event handlers come along for the ride.
@@ -47,9 +52,9 @@ Get a key at **[openrouter.ai/keys](https://openrouter.ai/keys)**.
 |------|--------------|
 | **Activate** | Popup → *Activate rethink mode*. The cursor becomes a crosshair. |
 | **Hover** | Every block outlines, softer the deeper it nests; a `✦ rethink` pill floats at its top-right. |
-| **Click** | The block locks. The pill becomes a one-line textarea that grows as you type. |
-| **Enter** | The block's HTML + its matching CSS are sent to your model; the reply is applied in place. |
-| **After** | `undo` · `again` · `done`. <kbd>Esc</kbd> exits the whole mode. |
+| **Click** | The block locks and a **side panel** docks beside it — prompt input + HTML/CSS/JS/Prompt tabs. |
+| **Enter** | The block's HTML + matching CSS stream to your model; the **diff fills in live**, CSS applies live. |
+| **After** | The HTML lands on the page with a flash. `again` · `undo` · `done`. <kbd>Esc</kbd> exits. |
 
 ## 🔒 Three modes, three contracts
 
@@ -76,20 +81,23 @@ Anything, as long as it's valid, script-free HTML. One-click `undo` always resto
 
 ```text
 manifest.json          MV3 · content script on <all_urls> · popup · options
-background.js           service worker — settings, the OpenRouter call, the model list
-                        (the BYOK key lives here, never in a page's JS world)
-content/content.js      nested-outline highlight · morphing textarea · CSS harvest ·
-                        the three mode-enforcing DOM appliers
-content/content.css     arms the crosshair; all UI lives in a Shadow DOM
+background.js           service worker — settings, the streaming OpenRouter call, the
+                        model list, the prompt preview (BYOK key lives here, never in a page)
+content/content.js      nested-outline highlight · side panel with HTML/CSS/JS/Prompt tabs ·
+                        live diff · CSS harvest · the three mode-enforcing DOM appliers
+content/content.css     arms the crosshair + the apply flash; all UI lives in a Shadow DOM
 popup/                  Main (activate · mode · model) · Settings (BYOK key)
 options/                full-page config; hosts the ai_model_selector modal
 vendor/                 juanpe500/ai_model_selector, vendored (MIT — MV3 CSP blocks CDN)
 icons/                  ✦ mark, generated
 ```
 
-**Flow:** popup arms the tab → the content script highlights & harvests → sends
-`{ prompt, html, css, mode }` to the worker → the worker calls OpenRouter with a mode-specific
-system prompt → the content script applies the reply under that mode's rules.
+**Flow:** popup arms the tab → the content script highlights & harvests → opens a `Port` and
+streams `{ prompt, html, css, mode }` to the worker → the worker calls OpenRouter with
+`stream: true` and forwards each delta back over the Port → the content script parses the fenced
+`html`/`css`/`js` blocks live (diff + live CSS) and, on completion, applies the HTML under the
+mode's rules. The **Prompt tab** is fed by a separate `OR_PREVIEW` message so what you see is
+exactly what's sent.
 
 ## 🤖 Model selection
 

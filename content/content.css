@@ -12,3 +12,15 @@ html.rethink-armed * {
 html.rethink-armed #rethink-root {
   cursor: default;
 }
+
+/* A brief ring when the AI's result lands on the page. */
+.rethink-flash {
+  animation: rethink-flash 0.9s ease-out 1;
+}
+@keyframes rethink-flash {
+  0% { box-shadow: 0 0 0 0 rgba(99, 102, 241, 0.55); }
+  100% { box-shadow: 0 0 0 14px rgba(99, 102, 241, 0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  .rethink-flash { animation: none; }
+}
