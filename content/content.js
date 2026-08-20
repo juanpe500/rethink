@@ -36,6 +36,8 @@
     port: null,
     raw: "",
     usage: null,
+    panelMoved: false, // user dragged the panel → stop auto-repositioning
+    dragging: null,
     sections: { html: "", css: "", js: "" },
     activeTab: "html",
     diffScheduled: false,
@@ -91,7 +93,9 @@
       box-shadow: 0 18px 50px rgba(0,0,0,.5); overflow: hidden;
       font: 13px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
     }
-    .phead { display: flex; align-items: center; gap: 8px; padding: 9px 11px; border-bottom: 1px solid #2a2a44; }
+    .phead { display: flex; align-items: center; gap: 8px; padding: 9px 11px; border-bottom: 1px solid #2a2a44; cursor: move; user-select: none; }
+    .phead.dragging { cursor: grabbing; }
+    .phead .x { cursor: pointer; }
     .phead .ttl { font-weight: 700; letter-spacing: .2px; }
     .phead .ttl .spk { color: #a5b4fc; }
     .phead .model { margin-left: auto; font: 11px ui-monospace, monospace; color: #8888a6; max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -236,6 +240,7 @@
     state.raw = "";
     state.sections = { html: "", css: "", js: "" };
     state.activeTab = "html";
+    state.panelMoved = false; // fresh block → auto-position again
     panel.style.display = "flex";
     panel.innerHTML = `
       <div class="phead">
@@ -292,13 +297,44 @@
     run.addEventListener("click", () => startRun(ta.value.trim()));
     panel.querySelector(".x").addEventListener("click", deselect);
     panel.querySelectorAll(".ptab").forEach((t) => t.addEventListener("click", () => switchTab(t.dataset.tab)));
+    panel.querySelector(".phead").addEventListener("mousedown", startDrag);
 
     positionPanel(el);
     setTimeout(() => { ta.focus(); grow(); }, 0);
   }
 
+  // ── dragging the panel by its header ───────────────────────────────────────
+  function startDrag(e) {
+    if (e.button !== 0 || e.target.closest(".x")) return; // left button; not the close ✕
+    e.preventDefault();
+    const r = panel.getBoundingClientRect();
+    state.dragging = { dx: e.clientX - r.left, dy: e.clientY - r.top };
+    panel.querySelector(".phead")?.classList.add("dragging");
+    window.addEventListener("mousemove", onDrag, true);
+    window.addEventListener("mouseup", endDrag, true);
+  }
+  function onDrag(e) {
+    if (!state.dragging) return;
+    e.preventDefault();
+    const pw = panel.offsetWidth, ph = panel.offsetHeight;
+    let left = e.clientX - state.dragging.dx;
+    let top = e.clientY - state.dragging.dy;
+    left = Math.max(4, Math.min(left, innerWidth - pw - 4));
+    top = Math.max(4, Math.min(top, innerHeight - ph - 4));
+    panel.style.left = left + "px";
+    panel.style.top = top + "px";
+    state.panelMoved = true;
+  }
+  function endDrag() {
+    state.dragging = null;
+    panel.querySelector(".phead")?.classList.remove("dragging");
+    window.removeEventListener("mousemove", onDrag, true);
+    window.removeEventListener("mouseup", endDrag, true);
+  }
+
   function positionPanel(el) {
     if (panel.style.display === "none") return;
+    if (state.panelMoved) return; // user placed it — leave it where they dropped it
     const r = el.getBoundingClientRect();
     const pw = panel.offsetWidth || 384;
     const ph = panel.offsetHeight || 320;

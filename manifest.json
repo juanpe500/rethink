@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "rethink",
-  "version": "0.4.1",
+  "version": "0.4.2",
   "description": "Hover any block on any page, describe how you'd rethink it, and let an AI restyle it live. BYOK OpenRouter — no server.",
   "action": {
     "default_popup": "popup/popup.html",
