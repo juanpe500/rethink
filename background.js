@@ -165,6 +165,29 @@ function parseFences(text) {
   return out;
 }
 
+// Turn an OpenRouter error body into a short summary + the full raw detail so
+// the panel can show everything (provider name, code, upstream provider error).
+function formatORError(status, bodyText) {
+  const raw = bodyText || "";
+  let short = `OpenRouter ${status}`;
+  let detailBody = raw;
+  try {
+    const j = JSON.parse(raw);
+    const e = j.error || j;
+    const bits = [];
+    if (e.message) bits.push(e.message);
+    if (e.code != null) bits.push(`code ${e.code}`);
+    const meta = e.metadata || {};
+    if (meta.provider_name) bits.push(`provider ${meta.provider_name}`);
+    if (bits.length) short = `OpenRouter ${status}: ${bits.join(" · ")}`;
+    detailBody = JSON.stringify(j, null, 2);
+  } catch (_) {
+    if (raw) short = `OpenRouter ${status}: ${raw.slice(0, 200)}`;
+  }
+  const full = `HTTP ${status}\n\n${detailBody || "(empty response body)"}`;
+  return { short, full };
+}
+
 // Non-streaming fallback (used if a Port stream can't be opened).
 async function callOpenRouter({ prompt, html, css, mode }) {
   const { rethink_or_key: key, rethink_model: model } = await getSettings();
@@ -183,13 +206,12 @@ async function callOpenRouter({ prompt, html, css, mode }) {
   }
   const text = await resp.text();
   if (!resp.ok) {
-    let msg = text;
-    try { msg = JSON.parse(text)?.error?.message || text; } catch (_) {}
-    return { ok: false, error: `OpenRouter ${resp.status}: ${msg}` };
+    const { short, full } = formatORError(resp.status, text);
+    return { ok: false, error: short, detail: full };
   }
   let data;
   try { data = JSON.parse(text); } catch (_) {
-    return { ok: false, error: "OpenRouter returned non-JSON." };
+    return { ok: false, error: "OpenRouter returned non-JSON.", detail: text.slice(0, 4000) };
   }
   const content = data?.choices?.[0]?.message?.content || "";
   const parts = parseFences(content);
@@ -218,10 +240,10 @@ async function streamOpenRouter(payload, port) {
     return;
   }
   if (!resp.ok || !resp.body) {
-    let msg = "";
-    try { msg = await resp.text(); } catch (_) {}
-    try { msg = JSON.parse(msg)?.error?.message || msg; } catch (_) {}
-    port.postMessage({ type: "error", error: `OpenRouter ${resp.status}: ${msg.slice(0, 300)}` });
+    let body = "";
+    try { body = await resp.text(); } catch (_) {}
+    const { short, full } = formatORError(resp.status, body);
+    port.postMessage({ type: "error", error: short, detail: full });
     return;
   }
 
@@ -246,6 +268,13 @@ async function streamOpenRouter(payload, port) {
         if (data === "[DONE]") continue;
         try {
           const j = JSON.parse(data);
+          // Some providers stream a 200 then emit an error frame instead of content.
+          if (j.error) {
+            const { short, full: detail } = formatORError(resp.status || 200, JSON.stringify(j));
+            port.postMessage({ type: "error", error: short, detail, full });
+            try { await reader.cancel(); } catch (_) {}
+            return;
+          }
           if (j.usage) usage = j.usage;
           const delta = j.choices?.[0]?.delta?.content || "";
           if (delta) {

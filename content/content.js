@@ -127,6 +127,7 @@
     .pane .sys { color: #7f7f9e; }
     .pane .sep { color: #6366f1; font-weight: 700; display: block; margin: 8px 0; }
     .pane .hl { background: rgba(99,102,241,.42); color: #fff; border-radius: 3px; padding: 0 2px; box-shadow: 0 0 0 1px rgba(129,140,248,.6); }
+    .pane .err { display: block; color: #fca5a5; white-space: pre-wrap; word-break: break-word; }
 
     .pfoot { display: flex; align-items: center; gap: 8px; padding: 9px 11px; border-top: 1px solid #2a2a44; flex-wrap: wrap; }
     .pfoot button { border: 1px solid #33334d; background: #23233a; color: #e6e6f2; border-radius: 7px; padding: 5px 11px; font: 600 12px ui-sans-serif, system-ui, sans-serif; cursor: pointer; }
@@ -424,7 +425,7 @@
         state.port = null;
       } else if (m.type === "error") {
         if (m.full) state.raw = m.full;
-        streamFailed(m.error);
+        streamFailed(m.error, m.detail);
         try { port.disconnect(); } catch (_) {}
         state.port = null;
       }
@@ -524,14 +525,28 @@
     syncToSelected();
   }
 
-  function streamFailed(msg) {
+  function streamFailed(msg, detail) {
     state.phase = "error";
     const run = panel.querySelector(".prun");
     if (run) run.disabled = false;
     setStatus("error");
-    setFoot(`<span class="msg">⚠ ${escapeHtml(msg)}</span><button class="primary" data-act="close">close</button>`);
+
+    // Full error text goes in the (scrollable) body so nothing is truncated.
+    const full = detail ? `${msg}\n\n${detail}` : msg;
+    const htmlPane = panel.querySelector('[data-pane="html"]');
+    if (htmlPane) { htmlPane.innerHTML = `<span class="err">${escapeHtml(full)}</span>`; switchTab("html"); }
+
+    setFoot(`<span class="msg">⚠ ${escapeHtml(msg)}</span>
+      <button data-act="copy">copy</button>
+      <button class="primary" data-act="close">close</button>`);
+    panel.querySelector('[data-act="copy"]')?.addEventListener("click", (e) => {
+      const b = e.currentTarget;
+      navigator.clipboard?.writeText(full).then(() => { b.textContent = "copied ✓"; }, () => { b.textContent = "copy failed"; });
+    });
     panel.querySelector('[data-act="close"]')?.addEventListener("click", () => {
       state.phase = "selected"; setStatus(""); setFoot("");
+      const p = panel.querySelector('[data-pane="html"]');
+      if (p) p.innerHTML = `<span class="empty">the diff will appear here as the model streams…</span>`;
     });
   }
 
