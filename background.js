@@ -368,26 +368,3 @@ chrome.runtime.onConnect.addListener((port) => {
     if (msg?.type === "run") streamOpenRouter(msg.payload || {}, port);
   });
 });
-
-// ── keyboard shortcut (default Alt+Shift+R) ──────────────────────────────────
-// Toggles rethink mode on the active tab without opening the popup. Injects the
-// content script first if the page was loaded before the extension.
-chrome.commands.onCommand.addListener(async (command) => {
-  if (command !== "toggle-rethink") return;
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  if (!tab?.id) return;
-  const { rethink_mode: mode } = await getSettings();
-  try {
-    const st = await chrome.tabs.sendMessage(tab.id, { type: "RETHINK_STATE" });
-    await chrome.tabs.sendMessage(tab.id, st?.armed ? { type: "RETHINK_DISARM" } : { type: "RETHINK_ARM", mode });
-  } catch (_) {
-    // content script not there yet → inject it, then arm
-    try {
-      await chrome.scripting.insertCSS({ target: { tabId: tab.id }, files: ["content/content.css"] });
-      await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ["content/content.js"] });
-      await chrome.tabs.sendMessage(tab.id, { type: "RETHINK_ARM", mode });
-    } catch (e) {
-      // privileged page (chrome://, web store, …) — nothing we can do
-    }
-  }
-});

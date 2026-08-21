@@ -156,13 +156,6 @@ document.querySelectorAll("#modepick button").forEach((b) =>
   })
 );
 
-// ── shortcut rebind ──────────────────────────────────────────────────────────
-$("#editShortcut").addEventListener("click", (e) => {
-  e.preventDefault();
-  chrome.tabs.create({ url: "chrome://extensions/shortcuts" });
-  window.close();
-});
-
 // ── model pickers → open the options page (roomy enough for the modal) ────────
 $("#pickModel").addEventListener("click", () => chrome.runtime.openOptionsPage());
 $("#pickModel2").addEventListener("click", () => chrome.runtime.openOptionsPage());

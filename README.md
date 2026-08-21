@@ -35,8 +35,6 @@ it rewrites that block in place. Your OpenRouter key stays in your browser; ther
 - **Climb the tree** — a **⤴ parent** button reselects the parent element (handy when children fill
   the parent and you can't hover it); the highlight and panel follow.
 - **Draggable** — move the panel anywhere by its header; it stays put while you work.
-- **One-key toggle** — `Alt+Shift+R` arms/disarms rethink on the current tab without opening the
-  popup (rebind at `chrome://extensions/shortcuts`).
 - **Cost & tokens, tracked** — every result shows its cost and input/output tokens; a **Usage** tab
   keeps the last 10, and a full **paginated usage log** records model · cost · tokens · date · site ·
   mode (metadata only — never your prompt or the page).
