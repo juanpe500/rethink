@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "rethink",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "Hover any block on any page, describe how you'd rethink it, and let an AI restyle it live. BYOK OpenRouter — no server.",
   "action": {
     "default_popup": "popup/popup.html",
@@ -23,6 +23,12 @@
   },
   "permissions": ["storage", "scripting", "activeTab", "tabs"],
   "host_permissions": ["https://openrouter.ai/*", "<all_urls>"],
+  "commands": {
+    "toggle-rethink": {
+      "suggested_key": { "default": "Alt+Shift+R" },
+      "description": "Toggle rethink mode on the current tab"
+    }
+  },
   "content_scripts": [
     {
       "matches": ["<all_urls>"],
