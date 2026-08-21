@@ -35,13 +35,20 @@ REPLY FORMAT — stream these fenced blocks, in this exact order, and nothing el
 <the complete replacement for the block, including its own outermost element>
 \`\`\`
 \`\`\`css
-/* OPTIONAL: extra or overriding CSS rules. Omit this block entirely if not needed. */
+/* CSS for the block. REQUIRED whenever your html uses ANY class or selector that is not
+   already defined in the MATCHING CSS RULES below: every new or renamed class MUST be fully
+   styled here. Only omit this block if you reused existing classes / inline styles and
+   introduced nothing new. */
 \`\`\`
 \`\`\`js
 // OPTIONAL: behaviour you suggest. It is shown to the user but NOT auto-executed. Omit if not needed.
 \`\`\`
 Always output the html block first and complete. Do not write any prose outside the fences.
-Never put <script> tags inside the html block. Never invent external URLs, images, or fonts.`;
+Never put <script> tags inside the html block. Never invent external URLs, images, or fonts.
+
+CRITICAL: never reference a class name you have not styled. If your html introduces new classes,
+their CSS in the css block is mandatory — an unstyled redesign is a failed response. Prefer real
+CSS rules over long inline styles. Scope your selectors to the block so you don't restyle the page.`;
 
   const perMode = {
     everything: `MODE: RESTYLE EVERYTHING.
@@ -51,6 +58,7 @@ HARD CONSTRAINTS — the output is rejected if any is violated:
 - Preserve EVERY data-* attribute, plus name, value, href, src, alt, type, and for/aria-* attributes.
 - Preserve all text content the user can read.
 - The HTML must be valid and self-contained (no unclosed tags).
+- You are RESTYLING: emit a css block that fully styles every class your html uses. New classes with no CSS render unstyled and count as a failed redesign.
 It is acceptable for JS event bindings to detach; the host will re-attach any element it can match by id.`,
 
     classes: `MODE: RESTYLE CLASSES ONLY.
@@ -63,7 +71,8 @@ HARD CONSTRAINTS — the host discards any change that violates these, so do not
 Return the same tree with only class/style edited.`,
 
     freedom: `MODE: FULL FREEDOM.
-Do whatever best satisfies the user's instruction. No constraints beyond valid, script-free HTML.`,
+Do whatever best satisfies the user's instruction. No constraints beyond valid, script-free HTML.
+If you introduce new classes, style them in the css block — do not leave the result unstyled.`,
   };
 
   return `${common}\n\n${perMode[mode] || perMode.freedom}`;
